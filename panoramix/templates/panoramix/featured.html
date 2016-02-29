@@ -20,7 +20,7 @@
               <td>
                 <div class="intable-longtext">
                   <h4>{{ dataset.table_name }}</h4>
-                  <p>{{ utils.markdown(dataset.description) | safe }}</p>
+                  <p>{{ utils.markdown(dataset.description) if dataset.description else safe }}</p>
                 </div>
               </td>
               <td class="small_table">{{ dataset.database }}</td>
