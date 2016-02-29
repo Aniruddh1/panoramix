@@ -64,6 +64,11 @@ If you are proposing a feature:
 
     # install for development
     python setup.py develop
+	
+	# Build npm dependencies (on a separate terminal)
+	cd panoramix/assets
+	npm install
+	npm run dev
 
     # Create an admin user
     fabmanager create-admin --app panoramix
