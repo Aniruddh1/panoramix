@@ -105,7 +105,7 @@ class Slice(Model, AuditMixinNullable):
     @property
     @utils.memoized
     def viz(self):
-        d = json.loads(self.params)
+        d = json.loads(self.params or u'{}')
         viz = viz_types[self.viz_type](
             self.datasource,
             form_data=d)
