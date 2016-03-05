@@ -4,17 +4,17 @@
     {{ super() }}
     <link rel="stylesheet" href="{{ url_for('static', filename="assets/node_modules/gridster/dist/jquery.gridster.min.css") }}">
     <style id="user_style" type="text/css">
-      {{ dashboard.css }}
+      {{ dashboard.css or '' }}
     </style>
 {% endblock %}
 
 {% block body %}
-<div class="dashboard">
+<div class="dashboard container-fluid" data-dashboard="{{ dashboard.json_data }}">
 
 <!-- Modal -->
 <div class="modal fade" id="css_modal" tabindex="-1" role="dialog">
   <div class="modal-dialog" role="document">
-    <div class="modal-content">
+    <div class="modal-content css">
       <div class="modal-header">
         <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
         <h4 class="modal-title" id="myModalLabel">Dashboard CSS</h4>
@@ -75,7 +75,6 @@
               id="slice_{{ slice.id }}"
               slice_id="{{ slice.id }}"
               class="widget {{ slice.viz.viz_type }}"
-              data-slice="{{ slice.json_data }}"
               data-row="{{ pos.row or 1 }}"
               data-col="{{ pos.col or loop.index }}"
               data-sizex="{{ pos.size_x or 4 }}"

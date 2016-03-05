@@ -167,6 +167,7 @@ class TableModelView(PanoramixModelView, DeleteMixin):
         try:
             table.fetch_metadata()
         except Exception as e:
+            logging.exception(e)
             flash(
             "Table [{}] doesn't seem to exist, "
             "couldn't fetch metadata".format(table.table_name),
@@ -215,7 +216,11 @@ class SliceModelView(PanoramixModelView, DeleteMixin):
         'table', 'dashboards', 'params']
     base_order = ('changed_on','desc')
     description_columns = {
-        'description': Markup("The content here can be displayed as widget headers in the dashboard view. Supports <a href='https://daringfireball.net/projects/markdown/'>markdown</a>"),
+        'description': Markup(
+            "The content here can be displayed as widget headers in the "
+            "dashboard view. Supports "
+            "<a href='https://daringfireball.net/projects/markdown/'>"
+            "markdown</a>"),
     }
 
 
@@ -511,9 +516,11 @@ class Panoramix(BaseView):
         dash = session.query(Dash).filter_by(id=dashboard_id).first()
         dash.slices = [o for o in dash.slices if o.id in slice_ids]
         dash.position_json = json.dumps(data['positions'], indent=4)
-        dash.json_metadata = json.dumps({
-            'expanded_slices': data['expanded_slices'],
-        }, indent=4)
+        md = dash.metadata_dejson
+        if 'filter_immune_slices' not in md:
+            md['filter_immune_slices'] = []
+        md['expanded_slices'] = data['expanded_slices']
+        dash.json_metadata = json.dumps(md, indent=4)
         dash.css = data['css']
         session.merge(dash)
         session.commit()
@@ -528,7 +535,7 @@ class Panoramix(BaseView):
             engine = create_engine(uri)
             engine.connect()
             return json.dumps(engine.table_names(), indent=4)
-        except Exception as e:
+        except Exception:
             return Response(
                 traceback.format_exc(),
                 status=500,
@@ -607,7 +614,7 @@ class Panoramix(BaseView):
         t = mydb.get_table(table_name)
         fields = ", ".join(
             [c.name for c in t.columns] or "*")
-        s = "SELECT\n{fields}\nFROM {table_name}".format(**locals())
+        s = "SELECT\n{}\nFROM {}".format(fields, table_name)
         return self.render_template(
             "panoramix/ajah.html",
             content=s

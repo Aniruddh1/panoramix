@@ -4,6 +4,7 @@ Panoramix
 [![Join the chat at https://gitter.im/mistercrunch/panoramix](https://badges.gitter.im/mistercrunch/panoramix.svg)](https://gitter.im/mistercrunch/panoramix?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 ![img](https://travis-ci.org/mistercrunch/panoramix.svg?branch=master)
 [![Coverage Status](https://coveralls.io/repos/mistercrunch/panoramix/badge.svg?branch=master&service=github)](https://coveralls.io/github/mistercrunch/panoramix?branch=master)
+[![Code Health](https://landscape.io/github/mistercrunch/panoramix/immune_to_filter/landscape.svg?style=flat)](https://landscape.io/github/mistercrunch/panoramix/master)
 
 Panoramix is a data exploration platform designed to be visual, intuitive
 and interactive.
@@ -13,7 +14,7 @@ Video - Introduction to Panoramix
 ---------------------------------
 [![Panoramix - ](http://img.youtube.com/vi/3Txm_nj_R7M/0.jpg)](http://www.youtube.com/watch?v=3Txm_nj_R7M)
 
-Screenshosts
+Screenshots
 ------------
 ![img](http://i.imgur.com/bi09J9X.png)
 ![img](http://i.imgur.com/aOaH0ty.png)
@@ -179,5 +180,4 @@ getting the foundation for free
 Contributing
 ------------
 
-Interested in contributing? Casual hacking? Check out the `CONTRIBUTING.md`
-file in the repository to get started!
+Interested in contributing? Casual hacking? Check out  [Contributing.MD](https://github.com/mistercrunch/panoramix/blob/master/CONTRIBUTING.md)
