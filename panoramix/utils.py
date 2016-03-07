@@ -244,9 +244,9 @@ def json_iso_dttm_ser(obj):
     >>> json.dumps({'dttm': dttm}, default=json_iso_dttm_ser)
     '{"dttm": "1970-01-01T00:00:00"}'
     """
-    if isinstance(obj, datetime):
-        obj = obj.isoformat()
-    return obj
+    if hasattr(obj, 'isoformat'):
+        return obj.isoformat()
+    return str(obj)
 
 
 def markdown(s):
