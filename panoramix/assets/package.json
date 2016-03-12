@@ -72,6 +72,8 @@
   "devDependencies": {
     "eslint": "^2.2.0",
     "file-loader": "^0.8.5",
-    "url-loader": "^0.5.7"
+    "less": "^2.6.1",
+    "url-loader": "^0.5.7",
+    "webpack": "^1.12.14"
   }
 }
