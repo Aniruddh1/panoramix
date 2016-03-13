@@ -87,6 +87,7 @@ function worldMapChart(slice) {
           exitDelay: 100,
           key: JSON.stringify
         },
+        // http://stackoverflow.com/questions/26811347/mouse-wheel-zoom-map-datamaps-js
         done: function(datamap){
           datamap.svg.call(d3.behavior.zoom().on("zoom", redraw));
           function redraw() {
