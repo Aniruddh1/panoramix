@@ -37,15 +37,14 @@ function filterBox(slice) {
 
           var div = container.append('div');
 
-          div.append("label").text(filter);
-
           div.append('div')
             .attr('name', filter)
             .classed('form-control', true)
             .attr('multiple', '')
             .attr('id', id);
+
           filtersObj[filter] = $('#' + id).select2({
-              placeholder: "Select [" + filter + ']',
+              placeholder: filter,
               containment: 'parent',
               dropdownAutoWidth: true,
               data: data,
