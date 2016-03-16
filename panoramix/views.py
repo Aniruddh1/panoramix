@@ -566,6 +566,16 @@ class Panoramix(BaseView):
             pass
         dashboard(dashboard_id=dash.id)
 
+        def parseExtraFilters(dash, jsonBody, queryParam):
+            extra_filters = "{}"
+            if jsonBody:
+                extra_filters = json.dumps(jsonBody.get('extra_filters'))
+            if queryParam:
+                extra_filters = queryParam
+            return extra_filters
+
+        extra_filters = parseExtraFilters(dash, request.json, request.args.get('extra_filters'))
+
         since = request.args.get('since')
         until = request.args.get('until')
         if since and until:
@@ -579,7 +589,8 @@ class Panoramix(BaseView):
         return self.render_template(
             "panoramix/dashboard.html", dashboard=dash,
             templates=templates,
-            pos_dict=pos_dict)
+            pos_dict=pos_dict,
+            extra_filters=extra_filters)
 
     @has_access
     @expose("/sql/<database_id>/")

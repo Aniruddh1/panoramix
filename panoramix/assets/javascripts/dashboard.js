@@ -14,7 +14,7 @@ require('../node_modules/gridster/dist/jquery.gridster.min.js');
 
 var Dashboard = function (dashboardData) {
   var dashboard = $.extend(dashboardData, {
-    filters: {},
+    filters: dashboardData.extra_filters || {},
     init: function () {
       this.initDashboardView();
       var sliceObjects = [],
@@ -196,5 +196,7 @@ var Dashboard = function (dashboardData) {
 };
 
 $(document).ready(function () {
-  Dashboard($('.dashboard').data('dashboard'));
+  var data = $('.dashboard').data('dashboard');
+  data.extra_filters = $('.dashboard').data('extra_filters');
+  Dashboard(data);
 });
