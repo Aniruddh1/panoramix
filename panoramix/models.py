@@ -484,7 +484,18 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
                 select_exprs += [timestamp_grain]
                 groupby_exprs += [timestamp_grain]
 
-            tf = '%Y-%m-%d %H:%M:%S.%f'
+            # UGLY: I guess correct way is to delegate on SQLAlchemy dialect
+            def get_dtformat(type):
+                if type == 'SMALLDATETIME' or type == 'DATETIME':
+                    return '%Y-%m-%d %H:%M:%S'
+                if type == 'DATE':
+                    return '%Y-%m-%d'
+                if type == 'TIME':
+                    return '%H:%M:%S'
+                return '%Y-%m-%d %H:%M:%S.%f'
+
+            tf = get_dtformat(cols[granularity].type or 'DATE')
+
             time_filter = [
                 timestamp >= from_dttm.strftime(tf),
                 timestamp <= to_dttm.strftime(tf),
