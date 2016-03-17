@@ -56,11 +56,13 @@ var Dashboard = function (dashboardData) {
     },
     refreshExcept: function (slice_id) {
       var immune = this.metadata.filter_immune_slices;
-      this.slices.forEach(function (slice) {
-        if (slice.data.slice_id !== slice_id && immune.indexOf(slice.data.slice_id) === -1) {
-          slice.render();
-        }
-      });
+      if (immune) {
+        this.slices.forEach(function (slice) {
+          if (slice.data.slice_id !== slice_id && immune.indexOf(slice.data.slice_id) === -1) {
+            slice.render();
+          }
+        });
+      }
     },
     clearFilters: function (slice_id) {
       delete this.filters[slice_id];
@@ -90,6 +92,7 @@ var Dashboard = function (dashboardData) {
     initDashboardView: function () {
       dashboard = this;
       var gridster = $(".gridster ul").gridster({
+        autogrow_cols: true,
         widget_margins: [10, 10],
         widget_base_dimensions: [100, 100],
         draggable: {
@@ -99,7 +102,9 @@ var Dashboard = function (dashboardData) {
           enabled: true,
           stop: function (e, ui, element) {
             var slice_data = $(element).data('slice');
-            dashboard.getSlice(slice_data.slice_id).resize();
+            if (slice_data) {
+              dashboard.getSlice(slice_data.slice_id).resize();
+            }
           }
         },
         serialize_params: function (_w, wgd) {
@@ -148,7 +153,8 @@ var Dashboard = function (dashboardData) {
       editor.setTheme("ace/theme/crimson_editor");
       editor.setOptions({
         minLines: 16,
-        maxLines: Infinity
+        maxLines: Infinity,
+        useWorker: false
       });
       editor.getSession().setMode("ace/mode/css");
 
@@ -158,8 +164,10 @@ var Dashboard = function (dashboardData) {
       $("#css_template").on("change", function () {
         var css = $(this).find('option:selected').data('css');
         editor.setValue(css);
+
         $('#dash_css').val(css);
-        $("#user_style").html(css);
+        injectCss("dashboard-template", css);
+
       });
       $('#filters').click(function () {
         alert(dashboard.readFilters());
@@ -167,28 +175,56 @@ var Dashboard = function (dashboardData) {
       $('#refresh').click(function () {
         dashboard.refreshExcept(null);
       });
-      $("a.closeslice").click(function () {
+      $("a.remove-chart").click(function () {
         var li = $(this).parents("li");
         gridster.remove_widget(li);
       });
-      $(".slice_info").click(function () {
-        var widget = $(this).parents('.widget');
-        var slice_description = widget.find('.slice_description');
-        slice_description.slideToggle(500, function () {
-          widget.find('.refresh').click();
-        });
+
+      $("li.widget").click(function (e) {
+        var $this = $(this);
+        var $target = $(e.target);
+
+        if ($target.hasClass("slice_info")) {
+          $this.find(".slice_description").slideToggle(0, function () {
+            $this.find('.refresh').click();
+          });
+        } else if ($target.hasClass("controls-toggle")) {
+          $this.find(".chart-controls").toggle();
+        }
       });
-      $("table.slice_header").mouseover(function () {
-        $(this).find("td.icons nobr").show();
-      });
-      $("table.slice_header").mouseout(function () {
-        $(this).find("td.icons nobr").hide();
-      });
+
       editor.on("change", function () {
         var css = editor.getValue();
         $('#dash_css').val(css);
-        $("#user_style").html(css);
+        injectCss("dashboard-template", css);
       });
+
+      var css = $('.dashboard').data('css');
+      injectCss("dashboard-template", css);
+
+      // Injects the passed css string into a style sheet with the specified className
+      // If a stylesheet doesn't exist with the passed className, one will be injected into <head>
+      function injectCss(className, css) {
+
+        var head  = document.head || document.getElementsByTagName('head')[0];
+        var style = document.querySelector('.' + className);
+
+        if (!style) {
+          if (className.split(' ').length > 1) {
+            throw new Error("This method only supports selections with a single class name.");
+          }
+          style = document.createElement('style');
+          style.className = className;
+          style.type = 'text/css';
+          head.appendChild(style);
+        }
+
+        if (style.styleSheet) {
+          style.styleSheet.cssText = css;
+        } else {
+          style.innerHTML = css;
+        }
+      }
     }
   });
   dashboard.init();
