@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
-rm -r _build
+rm -rf _build
 make html
-cp -r _build/html/ ../../panoramix-docs/
+cp -r ../caravel/assets/images/ _build/html/_static/img/
+rm -rf /tmp/caravel-docs
+cp -r _build/html /tmp/caravel-docs

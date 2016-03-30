@@ -8,15 +8,16 @@ autodetect: yes
 pylint:
   disable:
     - cyclic-import
+    - invalid-name
+    - logging-format-interpolation
   options:
     docstring-min-length: 10
+pep8:
+  full: true
 ignore-paths:
     - docs
-    - panoramix/migrations/env.py
-    - panoramix/ascii_art.py
+    - caravel/migrations/env.py
+    - caravel/ascii_art.py
 ignore-patterns:
     - ^example/doc_.*\.py$
     - (^|/)docs(/|$)
-python-targets:
-    - 2
-    - 3
