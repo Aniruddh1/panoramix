@@ -541,6 +541,8 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
                 groupby_exprs += [timestamp_grain]
 
             # UGLY: I guess correct way is to delegate on SQLAlchemy dialect
+            # UPDATE: Datetime depends on each dialect and I haven't found an easy way to manage
+            #         Maybe we can allow user to define its custome format at Database definition
             def get_dtformat(type):
                 if type == 'SMALLDATETIME' or type == 'DATETIME':
                     return '%Y-%m-%d %H:%M:%S'
