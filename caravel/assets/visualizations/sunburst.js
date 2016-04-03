@@ -89,8 +89,8 @@ function sunburstVis(slice) {
 
       vis = svg.append("svg:g")
         .attr("class", "sunburst-vis")
-        .attr("transform", "translate(" + (margin.left + (visWidth / 2)) + "," + (margin.top + breadcrumbHeight + (visHeight / 2)) + ")")
-        .on("mouseleave", mouseleave);
+        .attr("transform", "translate(" + (margin.left + (visWidth / 2)) + "," + (margin.top + breadcrumbHeight + (visHeight / 2)) + ")");
+        //.on("mouseleave", mouseleave);
 
       arcs = vis.append("svg:g")
         .attr("id", "arcs");
@@ -140,10 +140,23 @@ function sunburstVis(slice) {
 
       // Get total size of the tree = value of root node from partition.
       totalSize = path.node().__data__.value;
+
+      // Initial selection
+      var mainpath = function(){
+        var c = tree.children[0];
+        while(c.hasOwnProperty('children') && c.children.length != 0)
+            c = c.children[0];
+        return c;
+      }
+      highlighpath(mainpath());
+      window.sunburst = {nodes: nodes, mouseenter: mouseenter, tree:tree, ext:ext, main: mainpath()};
     }
 
     // Fade all but the current sequence, and show it in the breadcrumb trail.
     function mouseenter(d) {
+      highlighpath(d);
+    }
+    function highlighpath(d){
 
       var percentage = (d.m1 / totalSize).toPrecision(3);
       var percentageString = fp(percentage);
