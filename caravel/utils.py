@@ -5,12 +5,15 @@ import hashlib
 import functools
 import json
 import logging
+import re
 
 from dateutil.parser import parse
+from dateutil.relativedelta import relativedelta
 from sqlalchemy.types import TypeDecorator, TEXT
 from markdown import markdown as md
 import parsedatetime
 from flask_appbuilder.security.sqla import models as ab_models
+
 
 
 class memoized(object):  # noqa
@@ -77,6 +80,7 @@ def parse_human_datetime(s):
     True
     """
     try:
+        # dttm = parse_human_datetime_ex(s)
         dttm = parse(s)
     except Exception:
         try:
@@ -87,6 +91,75 @@ def parse_human_datetime(s):
             raise ValueError("Couldn't parse date string [{}]".format(s))
     return dttm
 
+
+def parse_human_datetime_ex(human, now):
+
+    s = human.lower()
+    dateonly = datetime.datetime(now.year, now.month, now.day, 0, 0, 0, 0)
+
+    # Check reference
+    reference = dateonly
+    if s.find("so far") != -1:
+        reference = now
+    return (parse_this_endof(s, reference) or
+        parse_last_next(s, reference))
+
+
+def parse_this_endof(s, reference):
+    # Check direction
+    match = re.match("(this|end of) (year|quarter|month|day)s?", s)
+    if match:
+        direction = match.group(1)
+        unit = match.group(2)
+        if unit == "year":
+            if direction == "this":
+                return datetime.datetime(reference.year, 1, 1, 0, 0, 0)
+            return datetime.datetime(reference.year, 12, 31, 0, 0, 0)
+        if unit == "quarter":
+            curr = (reference.month - 1) / 3
+            if direction == "this":
+                return datetime.datetime(reference.year, (curr * 3) + 1, 1, 0, 0, 0)
+            return datetime.datetime(reference.year, (curr * 3) + 4, 1, 0, 0, 0) + relativedelta(days=-1)
+        if unit == "month":
+            if direction == "this":
+                return datetime.datetime(reference.year, reference.month, 1, 0, 0, 0)
+            return  datetime.datetime(reference.year, reference.month + 1, 1, 0, 0, 0) + relativedelta(days=-1)
+        if unit == "day":
+            if direction == "this":
+                return datetime.datetime(reference.year, reference.month, reference.day, 0, 0, 0)
+            return datetime.datetime(reference.year, reference.month, reference.day + 1, 0, 0, 0) \
+                + relativedelta(seconds=-1)
+    return None
+
+
+def parse_last_next(s, reference):
+    # Check direction
+    match = re.match("(last|next)([0-9\s]*)(year|quarter|month|day)s?", s)
+    if match:
+        direction = match.group(1)
+        value = 1
+        if len(match.group(1).strip()) > 0:
+            value = int(match.group(1).strip())
+        unit = match.group(3)
+        if unit == "year":
+            if direction == "this":
+                return datetime.datetime(reference.year, 1, 1, 0, 0, 0)
+            return datetime.datetime(reference.year, 12, 31, 0, 0, 0)
+        if unit == "quarter":
+            curr = (reference.month - 1) / 3
+            if direction == "this":
+                return datetime.datetime(reference.year, (curr * 3) + 1, 1, 0, 0, 0)
+            return datetime.datetime(reference.year, (curr * 3) + 4, 1, 0, 0, 0) + relativedelta(days=-1)
+        if unit == "month":
+            if direction == "this":
+                return datetime.datetime(reference.year, reference.month, 1, 0, 0, 0)
+            return  datetime.datetime(reference.year, reference.month + 1, 1, 0, 0, 0) + relativedelta(days=-1)
+        if unit == "day":
+            if direction == "this":
+                return datetime.datetime(reference.year, reference.month, reference.day, 0, 0, 0)
+            return datetime.datetime(reference.year, reference.month, reference.day + 1, 0, 0, 0) \
+                + relativedelta(seconds=-1)
+    return None
 
 def dttm_from_timtuple(d):
     return datetime(
