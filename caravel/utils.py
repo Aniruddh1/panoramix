@@ -80,8 +80,9 @@ def parse_human_datetime(s):
     True
     """
     try:
-        # dttm = parse_human_datetime_ex(s)
-        dttm = parse(s)
+        dttm = parse_human_datetime_ex(s, datetime.now())
+        if dttm is None:
+            dttm = parse(s)
     except Exception:
         try:
             cal = parsedatetime.Calendar()
@@ -95,7 +96,7 @@ def parse_human_datetime(s):
 def parse_human_datetime_ex(human, now):
 
     s = human.lower()
-    dateonly = datetime.datetime(now.year, now.month, now.day, 0, 0, 0, 0)
+    dateonly = datetime(now.year, now.month, now.day, 0, 0, 0, 0)
 
     # Check reference
     reference = dateonly
@@ -107,59 +108,109 @@ def parse_human_datetime_ex(human, now):
 
 def parse_this_endof(s, reference):
     # Check direction
-    match = re.match("(this|end of) (year|quarter|month|day)s?", s)
+    match = re.match("(this|end of) (year|quarter|month|week|day|" +
+                     "monday|tuesday|wednesday|thursday|friday|saturday|sunday)", s)
     if match:
         direction = match.group(1)
         unit = match.group(2)
         if unit == "year":
             if direction == "this":
-                return datetime.datetime(reference.year, 1, 1, 0, 0, 0)
-            return datetime.datetime(reference.year, 12, 31, 0, 0, 0)
+                return datetime(reference.year, 1, 1, reference.hour, reference.minute, reference.second)
+            return datetime(reference.year, 12, 31, reference.hour, reference.minute, reference.second)
         if unit == "quarter":
             curr = (reference.month - 1) / 3
             if direction == "this":
-                return datetime.datetime(reference.year, (curr * 3) + 1, 1, 0, 0, 0)
-            return datetime.datetime(reference.year, (curr * 3) + 4, 1, 0, 0, 0) + relativedelta(days=-1)
+                return datetime(reference.year, (curr * 3) + 1, 1, reference.hour, reference.minute, reference.second)
+            return datetime(reference.year, (curr * 3) + 4, 1,
+                            reference.hour, reference.minute, reference.second) + relativedelta(days=-1)
         if unit == "month":
             if direction == "this":
-                return datetime.datetime(reference.year, reference.month, 1, 0, 0, 0)
-            return  datetime.datetime(reference.year, reference.month + 1, 1, 0, 0, 0) + relativedelta(days=-1)
+                return datetime(reference.year, reference.month, 1, reference.hour, reference.minute, reference.second)
+            return  datetime(reference.year, reference.month + 1, 1,
+                             reference.hour, reference.minute, reference.second) + relativedelta(days=-1)
         if unit == "day":
             if direction == "this":
-                return datetime.datetime(reference.year, reference.month, reference.day, 0, 0, 0)
-            return datetime.datetime(reference.year, reference.month, reference.day + 1, 0, 0, 0) \
-                + relativedelta(seconds=-1)
+                return datetime(reference.year, reference.month, reference.day,
+                                reference.hour, reference.minute, reference.second)
+            return datetime(reference.year, reference.month, reference.day + 1,
+                            reference.hour, reference.minute, reference.second) + relativedelta(seconds=-1)
+        if unit == "week":
+            if direction == "this":
+                return reference + relativedelta(days=-1 * reference.weekday())
+            return reference + relativedelta(weekday=6)
+        weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        if unit in weekdays:
+            return reference + relativedelta(days=weekdays.index(unit) - reference.weekday())
     return None
 
 
 def parse_last_next(s, reference):
     # Check direction
-    match = re.match("(last|next)([0-9\s]*)(year|quarter|month|day)s?", s)
+    match = re.match("(this day )?(last|next)([0-9\s]*)(year|quarter|month|week|day|" +
+                     "monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?", s)
     if match:
-        direction = match.group(1)
+        is_this_day = match.group(1) == "this day"
+        direction = match.group(2)
         value = 1
-        if len(match.group(1).strip()) > 0:
-            value = int(match.group(1).strip())
-        unit = match.group(3)
+        is_value_set = len(match.group(3).strip()) > 0
+        if is_value_set:
+            value = int(match.group(3).strip())
+        if direction == "last":
+            value *= -1
+        unit = match.group(4)
         if unit == "year":
-            if direction == "this":
-                return datetime.datetime(reference.year, 1, 1, 0, 0, 0)
-            return datetime.datetime(reference.year, 12, 31, 0, 0, 0)
+            res = reference + relativedelta(years=value)
+            if not is_this_day:
+                res = res.replace(month=1, day=1)
+            return res
         if unit == "quarter":
+            if is_this_day:
+                raise "'This day' not allowed"
             curr = (reference.month - 1) / 3
-            if direction == "this":
-                return datetime.datetime(reference.year, (curr * 3) + 1, 1, 0, 0, 0)
-            return datetime.datetime(reference.year, (curr * 3) + 4, 1, 0, 0, 0) + relativedelta(days=-1)
+            value *= 3
+            return datetime(reference.year, (curr * 3) + 1, 1,
+                            reference.hour, reference.minute, reference.second) + relativedelta(months=value)
         if unit == "month":
-            if direction == "this":
-                return datetime.datetime(reference.year, reference.month, 1, 0, 0, 0)
-            return  datetime.datetime(reference.year, reference.month + 1, 1, 0, 0, 0) + relativedelta(days=-1)
+            res = reference + relativedelta(months=value)
+            if not is_this_day:
+                res = res.replace(day=1)
+            return res
         if unit == "day":
-            if direction == "this":
-                return datetime.datetime(reference.year, reference.month, reference.day, 0, 0, 0)
-            return datetime.datetime(reference.year, reference.month, reference.day + 1, 0, 0, 0) \
-                + relativedelta(seconds=-1)
+            if is_this_day:
+                raise "'This day' not allowed"
+            return reference + relativedelta(days=value)
+        if unit == "week":
+            weekday = reference.weekday()
+            res = (reference + relativedelta(days=-1 * weekday)) + relativedelta(weeks=value)
+            if is_this_day:
+                res += relativedelta(weekday=weekday)
+            return res
+        weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+        if unit in weekdays:
+            if is_this_day:
+                raise "'This day' not allowed"
+            unitday = weekdays.index(unit)
+            daysfrommonday = unitday - reference.weekday()
+            # last
+
+            # next
+
+
+            if daysfrommonday == 0:
+                if direction == "last":
+                    daysfrommonday = -7
+                else:
+                    daysfrommonday = 7
+            if daysfrommonday > 0 and direction == "last":
+                is_value_set = True
+            if daysfrommonday < 0 and direction == "next":
+                is_value_set = True
+            res = (reference + relativedelta(days=daysfrommonday))
+            if is_value_set:
+                res += relativedelta(weeks=value)
+            return res
     return None
+
 
 def dttm_from_timtuple(d):
     return datetime(

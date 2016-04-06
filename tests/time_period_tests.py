@@ -1,36 +1,15 @@
-import imp
-import doctest
-import os
 import unittest
+from datetime import datetime
 
-from flask import escape
+from dateutil.relativedelta import relativedelta
 
-import caravel
-from caravel import app, db, models, utils, appbuilder
-
-os.environ['CARAVEL_CONFIG'] = 'tests.caravel_test_config'
-
-app.config['TESTING'] = True
-app.config['CSRF_ENABLED'] = False
-app.config['SECRET_KEY'] = 'thisismyscretkey'
-app.config['WTF_CSRF_ENABLED'] = False
-BASE_DIR = app.config.get("BASE_DIR")
-cli = imp.load_source('cli', BASE_DIR + "/bin/caravel")
+from caravel.utils import parse_human_datetime_ex
 
 
-class CaravelTests(unittest.TestCase):
+class TimePeriodTests(unittest.TestCase):
 
     def __init__(self, *args, **kwargs):
-        super(CaravelTests, self).__init__(*args, **kwargs)
-        self.client = app.test_client()
-        role_admin = appbuilder.sm.find_role('Admin')
-        user = appbuilder.sm.find_user('admin')
-        if not user:
-            appbuilder.sm.add_user(
-                'admin', 'admin',' user', 'admin@fab.org',
-                role_admin, 'general')
-        utils.init(caravel)
-        self.load_examples()
+        super(TimePeriodTests, self).__init__(*args, **kwargs)
 
     def setUp(self):
         pass
@@ -38,51 +17,147 @@ class CaravelTests(unittest.TestCase):
     def tearDown(self):
         pass
 
-    def login(self):
-        self.client.post(
-            '/login/',
-            data=dict(username='admin', password='general'),
-            follow_redirects=True)
-
-    def load_examples(self):
-        cli.load_examples(sample=True)
-
-    def test_slices(self):
+    def test_custom_periods(self):
         # Testing by running all the examples
-        self.login()
-        Slc = models.Slice
-        urls = []
-        for slc in db.session.query(Slc).all():
-            urls += [
-                slc.slice_url,
-                slc.viz.json_endpoint,
+        periods = [
+            # Between Tusday and Saturday: Wednesday
+            [datetime(2016, 4, 6, 10, 20, 10),
+                [
+                    ['this year', datetime(2016, 1, 1)],
+                    ['end of year', datetime(2016, 12, 31)],
+                    ['this month', datetime(2016, 4, 1)],
+                    ['end of month', datetime(2016, 4, 30)],
+                    ['this week', datetime(2016, 4, 4)],
+                    ['end of week', datetime(2016, 4, 10)],
+                    ['this day', datetime(2016, 4, 6)],
+                    ['end of day', datetime(2016, 4, 6, 23, 59, 59)],
+                    ['this quarter', datetime(2016, 4, 1)],
+                    ['end of quarter', datetime(2016, 6, 30)],
+                    ['this monday', datetime(2016, 4, 4)],
+                    ['this tuesday', datetime(2016, 4, 5)],
+                    ['this wednesday', datetime(2016, 4, 6)],
+                    ['this thursday', datetime(2016, 4, 7)],
+                    ['this friday', datetime(2016, 4, 8)],
+                    ['this saturday', datetime(2016, 4, 9)],
+                    ['this sunday', datetime(2016, 4, 10)]
+                ]
+            ],
+        # Monday
+            [datetime(2016, 4, 4, 10, 20, 10),
+                [
+                    ['this year', datetime(2016, 1, 1)],
+                    ['end of year', datetime(2016, 12, 31)],
+                    ['this month', datetime(2016, 4, 1)],
+                    ['end of month', datetime(2016, 4, 30)],
+                    ['this week', datetime(2016, 4, 4)],
+                    ['end of week', datetime(2016, 4, 10)],
+                    ['this day', datetime(2016, 4, 4)],
+                    ['end of day', datetime(2016, 4, 4, 23, 59, 59)],
+                    ['this quarter', datetime(2016, 4, 1)],
+                    ['end of quarter', datetime(2016, 6, 30)],
+                    ['this monday', datetime(2016, 4, 4)],
+                    ['this tuesday', datetime(2016, 4, 5)],
+                    ['this wednesday', datetime(2016, 4, 6)],
+                    ['this thursday', datetime(2016, 4, 7)],
+                    ['this friday', datetime(2016, 4, 8)],
+                    ['this saturday', datetime(2016, 4, 9)],
+                    ['this sunday', datetime(2016, 4, 10)]
+                ]
+            ],
+        # Sunday
+            [datetime(2016, 4, 10, 10, 20, 10),
+                [
+                    ['this year', datetime(2016, 1, 1)],
+                    ['end of year', datetime(2016, 12, 31)],
+                    ['this month', datetime(2016, 4, 1)],
+                    ['end of month', datetime(2016, 4, 30)],
+                    ['this week', datetime(2016, 4, 4)],
+                    ['end of week', datetime(2016, 4, 10)],
+                    ['this day', datetime(2016, 4, 10)],
+                    ['end of day', datetime(2016, 4, 10, 23, 59, 59)],
+                    ['this quarter', datetime(2016, 4, 1)],
+                    ['end of quarter', datetime(2016, 6, 30)],
+                    ['this monday', datetime(2016, 4, 4)],
+                    ['this tuesday', datetime(2016, 4, 5)],
+                    ['this wednesday', datetime(2016, 4, 6)],
+                    ['this thursday', datetime(2016, 4, 7)],
+                    ['this friday', datetime(2016, 4, 8)],
+                    ['this saturday', datetime(2016, 4, 9)],
+                    ['this sunday', datetime(2016, 4, 10)]
+                ]
+            ],
+            # last - next
+            # Between Tusday and Saturday: Wednesday
+            [datetime(2016, 4, 6, 10, 20, 10),
+                 [
+                     ['last year', datetime(2015, 1, 1)],
+                     ['next year', datetime(2017, 1, 1)],
+                     ['last month', datetime(2016, 3, 1)],
+                     ['next month', datetime(2016, 5, 1)],
+                     ['last week', datetime(2016, 3, 28)],
+                     ['next week', datetime(2016, 4, 11)],
+                     ['last day', datetime(2016, 4, 5)],
+                     ['next day', datetime(2016, 4, 7)],
+                     ['last quarter', datetime(2016, 1, 1)],
+                     ['next quarter', datetime(2016, 7, 1)],
+                     ['last monday', datetime(2016, 4, 4)],
+                     ['last tuesday', datetime(2016, 4, 5)],
+                     ['last wednesday', datetime(2016, 3, 30)],
+                     ['last thursday', datetime(2016, 3, 31)],
+                     ['last friday', datetime(2016, 4, 1)],
+                     ['last saturday', datetime(2016, 4, 2)],
+                     ['last sunday', datetime(2016, 4, 3)],
+                     ['next monday', datetime(2016, 4, 11)],
+                     ['next tuesday', datetime(2016, 4, 12)],
+                     ['next wednesday', datetime(2016, 4, 13)],
+                     ['next thursday', datetime(2016, 4, 7)],
+                     ['next friday', datetime(2016, 4, 8)],
+                     ['next saturday', datetime(2016, 4, 9)],
+                     ['next sunday', datetime(2016, 4, 10)]
+                ]
+            ],
+            # Between Tusday and Saturday: Wednesday with value
+            [datetime(2016, 4, 6, 10, 20, 10),
+                 [
+                     ['last 2 years', datetime(2014, 1, 1)],
+                     ['next 2 years', datetime(2018, 1, 1)],
+                     ['last 2 months', datetime(2016, 2, 1)],
+                     ['next 2 months', datetime(2016, 6, 1)],
+                     ['last 2 weeks', datetime(2016, 3, 21)],
+                     ['next 2 weeks', datetime(2016, 4, 18)],
+                     ['last 2 days', datetime(2016, 4, 4)],
+                     ['next 2 days', datetime(2016, 4, 8)],
+                     ['last 2 quarters', datetime(2015, 10, 1)],
+                     ['next 2 quarters', datetime(2016, 10, 1)],
+                     ['last 2 mondays', datetime(2016, 3, 28)],
+                     ['last 2 tuesdays', datetime(2016, 3, 29)],
+                     ['last 2 wednesdays', datetime(2016, 3, 30)],
+                     ['last 2 thursdays', datetime(2016, 3, 24)],
+                     ['last 2 fridays', datetime(2016, 3, 25)],
+                     ['last 2 saturdays', datetime(2016, 3, 26)],
+                     ['last 2 sundays', datetime(2016, 3, 27)],
+                     ['next 2 mondays', datetime(2016, 4, 18)],
+                     ['next 2 tuesdays', datetime(2016, 4, 19)],
+                     ['next 2 wednesdays', datetime(2016, 4, 13)],
+                     ['next 2 thursdays', datetime(2016, 4, 14)],
+                     ['next 2 fridays', datetime(2016, 4, 15)],
+                     ['next 2 saturdays', datetime(2016, 4, 16)],
+                     ['next 2 sundays', datetime(2016, 4, 17)]
+                ]
             ]
-        for url in urls:
-            self.client.get(url)
+        ]
 
-    def test_csv(self):
-        self.client.get('/caravel/explore/table/1/?viz_type=table&granularity=ds&since=100+years&until=now&metrics=count&groupby=name&limit=50&show_brush=y&show_brush=false&show_legend=y&show_brush=false&rich_tooltip=y&show_brush=false&show_brush=false&show_brush=false&show_brush=false&y_axis_format=&x_axis_showminmax=y&show_brush=false&line_interpolation=linear&rolling_type=None&rolling_periods=&time_compare=&num_period_compare=&where=&having=&flt_col_0=gender&flt_op_0=in&flt_eq_0=&flt_col_0=gender&flt_op_0=in&flt_eq_0=&slice_id=14&slice_name=Boys&collapsed_fieldsets=&action=&datasource_name=birth_names&datasource_id=1&datasource_type=table&previous_viz_type=line&csv=true')
+        for now, dataset in periods:
+            for p, d in dataset:
+                res = parse_human_datetime_ex(p, now)
+                self.assertEqual(res, d, p + ' returned ' + str(res) + ' expected ' + str(d))
 
-    def test_dashboard(self):
-        self.login()
-        urls = {}
-        for dash in db.session.query(models.Dashboard).all():
-            urls[dash.dashboard_title] = dash.url
-        for title, url in urls.items():
-            print(url)
-            assert escape(title) in self.client.get(url).data.decode('utf-8')
-
-    def test_doctests(self):
-        modules = [utils]
-        for mod in modules:
-            failed, tests = doctest.testmod(mod)
-            if failed:
-                raise Exception("Failed a doctest")
-
-    def test_misc(self):
-        assert self.client.get('/health').data.decode('utf-8') == "OK"
-        assert self.client.get('/ping').data.decode('utf-8') == "OK"
-
+            #so far
+            for p, d in dataset:
+                p += ' so far'
+                d += relativedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
+                res = parse_human_datetime_ex(p, now)
+                self.assertEqual(res, d, p + ' returned ' + str(res) + ' expected ' + str(d))
 
 if __name__ == '__main__':
     unittest.main()
