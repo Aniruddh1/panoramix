@@ -140,10 +140,23 @@ function sunburstVis(slice) {
 
       // Get total size of the tree = value of root node from partition.
       totalSize = path.node().__data__.value;
+      // Initial selection
+      var mainpath = function(){
+        var c = tree.children[0];
+        while(c.hasOwnProperty('children') && c.children.length != 0)
+          c = c.children[0];
+        return c;
+      }
+
+      highlighpath(mainpath());
     }
 
     // Fade all but the current sequence, and show it in the breadcrumb trail.
     function mouseenter(d) {
+      highlighpath(d);
+    }
+
+    function highlighpath(d){
 
       var sequenceArray = getAncestors(d);
       var parentOfD = sequenceArray[sequenceArray.length - 2] || null;
