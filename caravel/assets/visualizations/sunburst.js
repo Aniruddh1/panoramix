@@ -136,7 +136,8 @@ function sunburstVis(slice) {
           return colorByCategory ? px.color.category21(d.name) : colorScale(d.m2 / d.m1);
         })
         .style("opacity", 1)
-        .on("mouseenter", mouseenter);
+        .on("mouseenter", on_mouseenter)
+        .on("click", on_fixpath);
 
       // Get total size of the tree = value of root node from partition.
       totalSize = path.node().__data__.value;
@@ -152,12 +153,36 @@ function sunburstVis(slice) {
     }
 
     // Fade all but the current sequence, and show it in the breadcrumb trail.
-    function mouseenter(d) {
+    function on_mouseenter(d) {
       highlighpath(d);
     }
 
-    function highlighpath(d){
+    function on_fixpath(d){
+      fixpath(d, 'main');
+    }
 
+    function fixpath(d, type){
+      var sequenceArray = getAncestors(d);
+      var color = "#000";
+      switch(type){
+        case 'main':
+          color = "#a00";
+          break;
+        case 'secondary':
+          color = "#00a";
+          break;
+      }
+      // Then highlight only those that are an ancestor of the current segment.
+      arcs.selectAll("path")
+        .filter(function (node) {
+          return (sequenceArray.indexOf(node) >= 0);
+        })
+        .style("opacity", 1)
+        .style("stroke-width", "3px")
+        .style("stroke", color);
+
+    }
+    function highlighpath(d, fix){
       var sequenceArray = getAncestors(d);
       var parentOfD = sequenceArray[sequenceArray.length - 2] || null;
 
@@ -235,7 +260,7 @@ function sunburstVis(slice) {
         .style("stroke", null)
         .style("stroke-width", null)
         .each("end", function () {
-          d3.select(this).on("mouseenter", mouseenter);
+          d3.select(this).on("mouseenter", on_mouseenter);
         });
     }
 
