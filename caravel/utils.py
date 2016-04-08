@@ -101,8 +101,8 @@ def parse_human_datetime_ex(human, now):
     reference = dateonly
     if s.find("so far") != -1:
         reference = now
-    return (parse_this_endof(s, reference) or
-        parse_last_next(s, reference))
+    return (parse_last_next(s, reference) or
+            parse_this_endof(s, reference))
 
 
 def parse_this_endof(s, reference):
@@ -110,31 +110,34 @@ def parse_this_endof(s, reference):
     match = re.match("(this|end of) (year|quarter|month|week|day|" +
                      "monday|tuesday|wednesday|thursday|friday|saturday|sunday)", s)
     if match:
-        direction = match.group(1)
+        direction = 1
+        if match.group(1) == "this":
+            direction = -1
+
         unit = match.group(2)
         if unit == "year":
-            if direction == "this":
+            if direction < 0:
                 return datetime(reference.year, 1, 1, reference.hour, reference.minute, reference.second)
             return datetime(reference.year, 12, 31, reference.hour, reference.minute, reference.second)
         if unit == "quarter":
             curr = (reference.month - 1) / 3
-            if direction == "this":
+            if direction < 0:
                 return datetime(reference.year, (curr * 3) + 1, 1, reference.hour, reference.minute, reference.second)
             return datetime(reference.year, (curr * 3) + 4, 1,
                             reference.hour, reference.minute, reference.second) + relativedelta(days=-1)
         if unit == "month":
-            if direction == "this":
+            if direction < 0:
                 return datetime(reference.year, reference.month, 1, reference.hour, reference.minute, reference.second)
             return  datetime(reference.year, reference.month + 1, 1,
                              reference.hour, reference.minute, reference.second) + relativedelta(days=-1)
         if unit == "day":
-            if direction == "this":
+            if direction < 0:
                 return datetime(reference.year, reference.month, reference.day,
                                 reference.hour, reference.minute, reference.second)
             return datetime(reference.year, reference.month, reference.day + 1,
                             reference.hour, reference.minute, reference.second) + relativedelta(seconds=-1)
         if unit == "week":
-            if direction == "this":
+            if direction < 0:
                 return reference + relativedelta(days=-1 * reference.weekday())
             return reference + relativedelta(weekday=6)
         weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -148,17 +151,18 @@ def parse_last_next(s, reference):
     match = re.match("(this day )?(last|next)([0-9\s]*)(year|quarter|month|week|day|" +
                      "monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?", s)
     if match:
-        is_this_day = match.group(1) == "this day"
-        direction = match.group(2)
+        is_this_day = match.group(1) and match.group(1).strip() == "this day"
+        direction = 1
+        if match.group(2) == "last":
+            direction = -1
         value = 1
         is_value_set = len(match.group(3).strip()) > 0
         if is_value_set:
             value = int(match.group(3).strip())
-        if direction == "last":
-            value *= -1
+        offset = value * direction
         unit = match.group(4)
         if unit == "year":
-            res = reference + relativedelta(years=value)
+            res = reference + relativedelta(years=offset)
             if not is_this_day:
                 res = res.replace(month=1, day=1)
             return res
@@ -166,48 +170,37 @@ def parse_last_next(s, reference):
             if is_this_day:
                 raise "'This day' not allowed"
             curr = (reference.month - 1) / 3
-            value *= 3
+            offset *= 3
             return datetime(reference.year, (curr * 3) + 1, 1,
-                            reference.hour, reference.minute, reference.second) + relativedelta(months=value)
+                            reference.hour, reference.minute, reference.second) + relativedelta(months=offset)
         if unit == "month":
-            res = reference + relativedelta(months=value)
+            res = reference + relativedelta(months=offset)
             if not is_this_day:
                 res = res.replace(day=1)
             return res
         if unit == "day":
             if is_this_day:
                 raise "'This day' not allowed"
-            return reference + relativedelta(days=value)
+            return reference + relativedelta(days=offset)
         if unit == "week":
-            weekday = reference.weekday()
-            res = (reference + relativedelta(days=-1 * weekday)) + relativedelta(weeks=value)
-            if is_this_day:
-                res += relativedelta(weekday=weekday)
+            res = reference + relativedelta(weeks=offset)
+            if not is_this_day:
+                res += relativedelta(days=-1 * res.weekday())
             return res
         weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
         if unit in weekdays:
             if is_this_day:
                 raise "'This day' not allowed"
             unitday = weekdays.index(unit)
-            daysfrommonday = unitday - reference.weekday()
-            # last
-
-            # next
-
-
-            if daysfrommonday == 0:
-                if direction == "last":
-                    daysfrommonday = -7
-                else:
-                    daysfrommonday = 7
-            if daysfrommonday > 0 and direction == "last":
-                is_value_set = True
-            if daysfrommonday < 0 and direction == "next":
-                is_value_set = True
-            res = (reference + relativedelta(days=daysfrommonday))
-            if is_value_set:
-                res += relativedelta(weeks=value)
-            return res
+            daysdiff = abs(unitday - reference.weekday())
+            # same day the week before
+            if daysdiff == 0:
+                daysdiff = 7
+            elif (unitday > reference.weekday() and direction < 0) or \
+                (unitday < reference.weekday() and direction > 0):
+                daysdiff = abs(daysdiff - 7)
+            offset = (((value - 1) * 7) + daysdiff) * direction
+            return reference + relativedelta(days=offset)
     return None
 
 
