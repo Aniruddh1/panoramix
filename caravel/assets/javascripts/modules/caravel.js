@@ -8,6 +8,7 @@ var sourceMap = {
   bar: 'nvd3_vis.js',
   bubble: 'nvd3_vis.js',
   big_number: 'big_number.js',
+  big_number_total: 'big_number.js',
   compare: 'nvd3_vis.js',
   dist_bar: 'nvd3_vis.js',
   directed_force: 'directed_force.js',
@@ -18,6 +19,7 @@ var sourceMap = {
   markup: 'markup.js',
   para: 'parallel_coordinates.js',
   pie: 'nvd3_vis.js',
+  box_plot: 'nvd3_vis.js',
   pivot_table: 'pivot_table.js',
   sankey: 'sankey.js',
   sunburst: 'sunburst.js',
@@ -44,6 +46,7 @@ var color = function () {
     // Color factory
     var seen = {};
     return function (s) {
+      if (!s) { return; }
       // next line is for caravel series that should have the same color
       s = s.replace('---', '');
       if (seen[s] === undefined) {
@@ -312,6 +315,7 @@ var px = (function () {
         token.find("img.loading").show();
         container.hide();
         container.html('');
+        container.css('height', slice.height());
         dttm = 0;
         timer = setInterval(stopwatch, 10);
         $('#timer').removeClass('btn-danger btn-success');
@@ -321,6 +325,7 @@ var px = (function () {
       resize: function () {
         token.find("img.loading").show();
         container.hide();
+        container.css('height', slice.height());
         container.html('');
         this.viz.render();
         this.viz.resize();

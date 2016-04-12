@@ -1,12 +1,18 @@
 """Flask web views for Caravel"""
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
-from datetime import datetime
 import json
 import logging
 import re
 import time
 import traceback
+from datetime import datetime
 
+import pandas as pd
+import sqlalchemy as sqla
 from flask import (
     g, request, redirect, flash, Response, render_template, Markup)
 from flask.ext.appbuilder import ModelView, CompactCRUDMixin, BaseView, expose
@@ -15,12 +21,10 @@ from flask.ext.appbuilder.models.sqla.interface import SQLAInterface
 from flask.ext.appbuilder.security.decorators import has_access
 from pydruid.client import doublesum
 from sqlalchemy import create_engine
-import sqlalchemy as sqla
-from wtforms.validators import ValidationError
-import pandas as pd
 from sqlalchemy import select, text
 from sqlalchemy.sql.expression import TextAsFrom
 from werkzeug.routing import BaseConverter
+from wtforms.validators import ValidationError
 
 from caravel import appbuilder, db, models, viz, utils, app, sm, ascii_art
 
@@ -74,6 +78,9 @@ class TableColumnInlineView(CompactCRUDMixin, CaravelModelView):  # noqa
             "Whether to make this column available as a "
             "[Time Granularity] option, column has to be DATETIME or "
             "DATETIME-like"),
+        'expression': utils.markdown(
+            "a valid SQL expression as supported by the underlying backend. "
+            "Example: `substr(name, 1, 1)`", True),
     }
 appbuilder.add_view_no_menu(TableColumnInlineView)
 
@@ -102,6 +109,11 @@ class SqlMetricInlineView(CompactCRUDMixin, CaravelModelView):  # noqa
     edit_columns = [
         'metric_name', 'description', 'verbose_name', 'metric_type',
         'expression', 'table']
+    description_columns = {
+        'expression': utils.markdown(
+            "a valid SQL expression as supported by the underlying backend. "
+            "Example: `count(DISTINCT userid)`", True),
+    }
     add_columns = edit_columns
     page_size = 500
 appbuilder.add_view_no_menu(SqlMetricInlineView)
@@ -474,7 +486,7 @@ class Caravel(BaseView):
         obj = viz.viz_types[viz_type](
             datasource,
             form_data=request.args,
-            slice=slc)
+            slice_=slc)
         if request.args.get("json") == "true":
             status = 200
             try:
@@ -625,8 +637,9 @@ class Caravel(BaseView):
     def testconn(self):
         """Tests a sqla connection"""
         try:
-            uri = request.form.get('uri')
-            engine = create_engine(uri)
+            uri = request.json.get('uri')
+            connect_args = request.json.get('extras', {}).get('engine_params', {}).get('connect_args')
+            engine = create_engine(uri, connect_args=connect_args)
             engine.connect()
             return json.dumps(engine.table_names(), indent=4)
         except Exception:
@@ -638,7 +651,7 @@ class Caravel(BaseView):
     @expose("/favstar/<class_name>/<obj_id>/<action>/")
     def favstar(self, class_name, obj_id, action):
         session = db.session()
-        FavStar = models.FavStar
+        FavStar = models.FavStar  # noqa
         count = 0
         favs = session.query(FavStar).filter_by(
             class_name=class_name, obj_id=obj_id, user_id=g.user.id).all()
@@ -714,14 +727,15 @@ class Caravel(BaseView):
         cols = mydb.get_columns(table_name)
         df = pd.DataFrame([(c['name'], c['type']) for c in cols])
         df.columns = ['col', 'type']
+        tbl_cls = (
+            "dataframe table table-striped table-bordered "
+            "table-condensed sql_results").split(' ')
         return self.render_template(
             "caravel/ajah.html",
             content=df.to_html(
                 index=False,
                 na_rep='',
-                classes=(
-                    "dataframe table table-striped table-bordered "
-                    "table-condensed sql_results")))
+                classes=tbl_cls))
 
     @has_access
     @expose("/select_star/<database_id>/<table_name>/")
@@ -749,6 +763,11 @@ class Caravel(BaseView):
         sql = data.get('sql')
         database_id = data.get('database_id')
         mydb = session.query(models.Database).filter_by(id=database_id).first()
+
+        if (
+                not self.appbuilder.sm.has_access(
+                    'all_datasource_access', 'all_datasource_access')):
+            raise Exception("test")
         content = ""
         if mydb:
             eng = mydb.get_sqla_engine()
@@ -767,7 +786,7 @@ class Caravel(BaseView):
                     na_rep='',
                     classes=(
                         "dataframe table table-striped table-bordered "
-                        "table-condensed sql_results"))
+                        "table-condensed sql_results").split(' '))
             except Exception as e:
                 content = (
                     '<div class="alert alert-danger">'

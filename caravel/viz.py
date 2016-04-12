@@ -3,25 +3,29 @@
 These objects represent the backend of all the visualizations that
 Caravel can render.
 """
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+from __future__ import unicode_literals
 
-from collections import OrderedDict, defaultdict
-from datetime import datetime, timedelta
+import hashlib
 import json
 import logging
 import uuid
-import hashlib
+from collections import OrderedDict, defaultdict
+from datetime import datetime, timedelta
 
+import pandas as pd
+import numpy as np
 from flask import flash, request, Markup
 from markdown import markdown
 from pandas.io.json import dumps
+from six import string_types
 from werkzeug.datastructures import ImmutableMultiDict
 from werkzeug.urls import Href
-import pandas as pd
 
 from caravel import app, utils, cache
 from caravel.forms import FormFactory
-
-from six import string_types
 
 config = app.config
 
@@ -32,6 +36,7 @@ class BaseViz(object):
 
     viz_type = None
     verbose_name = "Base Viz"
+    credits = ""
     is_timeseries = False
     fieldsets = ({
         'label': None,
@@ -41,14 +46,14 @@ class BaseViz(object):
     },)
     form_overrides = {}
 
-    def __init__(self, datasource, form_data, slice=None):
+    def __init__(self, datasource, form_data, slice_=None):
         self.orig_form_data = form_data
         if not datasource:
             raise Exception("Viz is missing a datasource")
         self.datasource = datasource
         self.request = request
         self.viz_type = form_data.get("viz_type")
-        self.slice = slice
+        self.slice = slice_
 
         # TODO refactor all form related logic out of here and into forms.py
         ff = FormFactory(self)
@@ -240,20 +245,36 @@ class BaseViz(object):
             is_cached = False
             cache_timeout = self.cache_timeout
             payload = {
+                'cache_timeout': cache_timeout,
+                'csv_endpoint': self.csv_endpoint,
                 'data': self.get_data(),
-                'query': self.query,
                 'form_data': self.form_data,
                 'json_endpoint': self.json_endpoint,
-                'csv_endpoint': self.csv_endpoint,
+                'query': self.query,
                 'standalone_endpoint': self.standalone_endpoint,
-                'cache_timeout': cache_timeout,
             }
             payload['cached_dttm'] = datetime.now().isoformat().split('.')[0]
             logging.info("Caching for the next {} seconds".format(
                 cache_timeout))
             cache.set(cache_key, payload, timeout=self.cache_timeout)
         payload['is_cached'] = is_cached
-        return dumps(payload)
+        return self.json_dumps(payload)
+
+    def json_dumps(self, obj):
+        """Used by get_json, can be overridden to use specific switches"""
+        return dumps(obj)
+
+    @property
+    def data(self):
+        content = {
+            'csv_endpoint': self.csv_endpoint,
+            'form_data': self.form_data,
+            'json_endpoint': self.json_endpoint,
+            'standalone_endpoint': self.standalone_endpoint,
+            'token': self.token,
+            'viz_name': self.viz_type,
+        }
+        return content
 
     def get_csv(self):
         df = self.get_df()
@@ -281,18 +302,6 @@ class BaseViz(object):
         return self.get_url(standalone="true")
 
     @property
-    def data(self):
-        content = {
-            'viz_name': self.viz_type,
-            'json_endpoint': self.json_endpoint,
-            'csv_endpoint': self.csv_endpoint,
-            'standalone_endpoint': self.standalone_endpoint,
-            'token': self.token,
-            'form_data': self.form_data,
-        }
-        return content
-
-    @property
     def json_data(self):
         return dumps(self.data)
 
@@ -303,6 +312,7 @@ class TableViz(BaseViz):
 
     viz_type = "table"
     verbose_name = "Table View"
+    credits = 'a <a href="https://github.com/airbnb/caravel">Caravel</a> original'
     fieldsets = ({
         'label': "Chart Options",
         'fields': (
@@ -350,6 +360,9 @@ class TableViz(BaseViz):
             columns=list(df.columns),
         )
 
+    def json_dumps(self, obj):
+        return json.dumps(obj, default=utils.json_iso_dttm_ser)
+
 
 class PivotTableViz(BaseViz):
 
@@ -357,6 +370,7 @@ class PivotTableViz(BaseViz):
 
     viz_type = "pivot_table"
     verbose_name = "Pivot Table"
+    credits = 'a <a href="https://github.com/airbnb/caravel">Caravel</a> original'
     is_timeseries = False
     fieldsets = ({
         'label': None,
@@ -409,7 +423,7 @@ class PivotTableViz(BaseViz):
             na_rep='',
             classes=(
                 "dataframe table table-striped table-bordered "
-                "table-condensed table-hover"))
+                "table-condensed table-hover").split(" "))
 
 
 class MarkupViz(BaseViz):
@@ -476,9 +490,117 @@ class NVD3Viz(BaseViz):
 
     """Base class for all nvd3 vizs"""
 
+    credits = '<a href="http://nvd3.org/">NVD3.org</a>'
     viz_type = None
     verbose_name = "Base NVD3 Viz"
     is_timeseries = False
+
+
+class BoxPlotViz(NVD3Viz):
+
+    """Box plot viz from ND3"""
+
+    viz_type = "box_plot"
+    verbose_name = "Box Plot"
+    sort_series = False
+    is_timeseries = True
+    fieldsets = ({
+        'label': None,
+        'fields': (
+            'metrics',
+            'groupby', 'limit',
+        ),
+    }, {
+        'label': 'Chart Options',
+        'fields': (
+            'whisker_options',
+        )
+    },)
+
+    def get_df(self, query_obj=None):
+        form_data = self.form_data
+        df = super(BoxPlotViz, self).get_df(query_obj)
+
+        df = df.fillna(0)
+
+        # conform to NVD3 names
+        def Q1(series):  # need to be named functions - can't use lambdas
+            return np.percentile(series, 25)
+
+        def Q3(series):
+            return np.percentile(series, 75)
+
+        whisker_type = form_data.get('whisker_options')
+        if whisker_type == "Tukey":
+
+            def whisker_high(series):
+                upper_outer_lim = Q3(series) + 1.5 * (Q3(series) - Q1(series))
+                series = series[series <= upper_outer_lim]
+                return series[np.abs(series - upper_outer_lim).argmin()]
+
+            def whisker_low(series):
+                lower_outer_lim = Q1(series) - 1.5 * (Q3(series) - Q1(series))
+                # find the closest value above the lower outer limit
+                series = series[series >= lower_outer_lim]
+                return series[np.abs(series - lower_outer_lim).argmin()]
+
+        elif whisker_type == "Min/max (no outliers)":
+
+            def whisker_high(series):
+                return series.max()
+
+            def whisker_low(series):
+                return series.min()
+
+        elif " percentiles" in whisker_type:
+            low, high = whisker_type.replace(" percentiles", "").split("/")
+
+            def whisker_high(series):
+                return np.percentile(series, int(high))
+
+            def whisker_low(series):
+                return np.percentile(series, int(low))
+
+        else:
+            raise ValueError("Unknown whisker type: {}".format(whisker_type))
+
+        def outliers(series):
+            above = series[series > whisker_high(series)]
+            below = series[series < whisker_low(series)]
+            # pandas sometimes doesn't like getting lists back here
+            return set(above.tolist() + below.tolist())
+
+        aggregate = [Q1, np.median, Q3, whisker_high, whisker_low, outliers]
+        df = df.groupby(form_data.get('groupby')).agg(aggregate)
+        return df
+
+    def to_series(self, df, classed='', title_suffix=''):
+        label_sep = " - "
+        chart_data = []
+        for index_value, row in zip(df.index, df.to_dict(orient="records")):
+            if isinstance(index_value, tuple):
+                index_value = label_sep.join(index_value)
+            boxes = defaultdict(dict)
+            for (label, key), value in row.items():
+                if key == "median":
+                    key = "Q2"
+                boxes[label][key] = value
+            for label, box in boxes.items():
+                if len(self.form_data.get("metrics")) > 1:
+                    # need to render data labels with metrics
+                    chart_label = label_sep.join([index_value, label])
+                else:
+                    chart_label = index_value
+                chart_data.append({
+                    "label": chart_label,
+                    "values": box,
+                })
+        return chart_data
+
+    def get_data(self):
+        df = self.get_df()
+        chart_data = self.to_series(df)
+        return chart_data
 
 
 class BubbleViz(NVD3Viz):
@@ -554,7 +676,8 @@ class BigNumberViz(BaseViz):
     """Put emphasis on a single metric with this big number viz"""
 
     viz_type = "big_number"
-    verbose_name = "Big Number"
+    verbose_name = "Big Number with Trendline"
+    credits = 'a <a href="https://github.com/airbnb/caravel">Caravel</a> original'
     is_timeseries = True
     fieldsets = ({
         'label': None,
@@ -595,6 +718,52 @@ class BigNumberViz(BaseViz):
             'data': df.values.tolist(),
             'compare_lag': compare_lag,
             'compare_suffix': form_data.get('compare_suffix', ''),
+        }
+
+
+class BigNumberTotalViz(BaseViz):
+
+    """Put emphasis on a single metric with this big number viz"""
+
+    viz_type = "big_number_total"
+    verbose_name = "Big Number"
+    credits = 'a <a href="https://github.com/airbnb/caravel">Caravel</a> original'
+    is_timeseries = False
+    fieldsets = ({
+        'label': None,
+        'fields': (
+            'metric',
+            'subheader',
+            'y_axis_format',
+        )
+    },)
+    form_overrides = {
+        'y_axis_format': {
+            'label': 'Number format',
+        }
+    }
+
+    def reassignments(self):
+        metric = self.form_data.get('metric')
+        if not metric:
+            self.form_data['metric'] = self.orig_form_data.get('metrics')
+
+    def query_obj(self):
+        d = super(BigNumberTotalViz, self).query_obj()
+        metric = self.form_data.get('metric')
+        if not metric:
+            raise Exception("Pick a metric!")
+        d['metrics'] = [self.form_data.get('metric')]
+        self.form_data['metric'] = metric
+        return d
+
+    def get_data(self):
+        form_data = self.form_data
+        df = self.get_df()
+        df = df.sort(columns=df.columns[0])
+        return {
+            'data': df.values.tolist(),
+            'subheader': form_data.get('subheader', ''),
         }
 
 
@@ -878,9 +1047,8 @@ class DistributionBarViz(DistributionPieViz):
 
     def get_data(self):
         df = self.get_df()
-        series = df.to_dict('series')
         chart_data = []
-        for name, ys in series.items():
+        for name, ys in df.iteritems():
             if df[name].dtype.kind not in "biufc":
                 continue
             if isinstance(name, string_types):
@@ -907,6 +1075,9 @@ class SunburstViz(BaseViz):
     viz_type = "sunburst"
     verbose_name = "Sunburst"
     is_timeseries = False
+    credits = (
+        'Kerry Rodden '
+        '@<a href="https://bl.ocks.org/kerryrodden/7090426">bl.ocks.org</a>')
     fieldsets = ({
         'label': None,
         'fields': (
@@ -970,6 +1141,7 @@ class SankeyViz(BaseViz):
     viz_type = "sankey"
     verbose_name = "Sankey"
     is_timeseries = False
+    credits = '<a href="https://www.npmjs.com/package/d3-sankey">d3-sankey on npm</a>'
     fieldsets = ({
         'label': None,
         'fields': (
@@ -996,7 +1168,34 @@ class SankeyViz(BaseViz):
     def get_data(self):
         df = self.get_df()
         df.columns = ['source', 'target', 'value']
-        return df.to_dict(orient='records')
+        recs = df.to_dict(orient='records')
+
+        hierarchy = defaultdict(set)
+        for row in recs:
+            hierarchy[row['source']].add(row['target'])
+
+        def find_cycle(g):
+            """Whether there's a cycle in a directed graph"""
+            path = set()
+
+            def visit(vertex):
+                path.add(vertex)
+                for neighbour in g.get(vertex, ()):
+                    if neighbour in path or visit(neighbour):
+                        return (vertex, neighbour)
+                path.remove(vertex)
+
+            for v in g:
+                cycle = visit(v)
+                if cycle:
+                    return cycle
+
+        cycle = find_cycle(hierarchy)
+        if cycle:
+            raise Exception(
+                "There's a loop in your Sankey, please provide a tree. "
+                "Here's a faulty link: {}".format(cycle))
+        return recs
 
 
 class DirectedForceViz(BaseViz):
@@ -1005,6 +1204,7 @@ class DirectedForceViz(BaseViz):
 
     viz_type = "directed_force"
     verbose_name = "Directed Force Layout"
+    credits = 'd3noob @<a href="http://bl.ocks.org/d3noob/5141278">bl.ocks.org</a>'
     is_timeseries = False
     fieldsets = ({
         'label': None,
@@ -1047,6 +1247,7 @@ class WorldMapViz(BaseViz):
     viz_type = "world_map"
     verbose_name = "World Map"
     is_timeseries = False
+    credits = 'datamaps on <a href="https://www.npmjs.com/package/datamaps">npm</a>'
     fieldsets = ({
         'label': None,
         'fields': (
@@ -1120,6 +1321,7 @@ class FilterBoxViz(BaseViz):
     viz_type = "filter_box"
     verbose_name = "Filters"
     is_timeseries = False
+    credits = 'a <a href="https://github.com/airbnb/caravel">Caravel</a> original'
     fieldsets = ({
         'label': None,
         'fields': (
@@ -1166,6 +1368,7 @@ class IFrameViz(BaseViz):
 
     viz_type = "iframe"
     verbose_name = "iFrame"
+    credits = 'a <a href="https://github.com/airbnb/caravel">Caravel</a> original'
     is_timeseries = False
     fieldsets = ({
         'label': None,
@@ -1183,6 +1386,9 @@ class ParallelCoordinatesViz(BaseViz):
 
     viz_type = "para"
     verbose_name = "Parallel Coordinates"
+    credits = (
+        '<a href="https://syntagmatic.github.io/parallel-coordinates/">'
+        'Syntagmatic\'s library</a>')
     is_timeseries = False
     fieldsets = ({
         'label': None,
@@ -1218,6 +1424,9 @@ class HeatmapViz(BaseViz):
     viz_type = "heatmap"
     verbose_name = "Heatmap"
     is_timeseries = False
+    credits = (
+        'inspired from mbostock @<a href="http://bl.ocks.org/mbostock/3074470">'
+        'bl.ocks.org</a>')
     fieldsets = ({
         'label': None,
         'fields': (
@@ -1286,6 +1495,7 @@ viz_types_list = [
     MarkupViz,
     WordCloudViz,
     BigNumberViz,
+    BigNumberTotalViz,
     SunburstViz,
     DirectedForceViz,
     SankeyViz,
@@ -1294,6 +1504,7 @@ viz_types_list = [
     IFrameViz,
     ParallelCoordinatesViz,
     HeatmapViz,
+    BoxPlotViz,
 ]
 
 viz_types = OrderedDict([(v.viz_type, v) for v in viz_types_list])
