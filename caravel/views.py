@@ -140,6 +140,7 @@ class DatabaseView(CaravelModelView, DeleteMixin):  # noqa
     order_columns = utils.list_minus(list_columns, ['created_by_'])
     add_columns = [
         'database_name', 'sqlalchemy_uri', 'cache_timeout', 'extra']
+    show_columns = add_columns
     search_exclude_columns = ('password',)
     edit_columns = add_columns
     add_template = "caravel/models/database/add.html"
@@ -449,6 +450,7 @@ class Caravel(BaseView):
     @expose("/datasource/<datasource_type>/<datasource_id>/")  # Legacy url
     @log_this
     def explore(self, datasource_type, datasource_id):
+        error_redirect = '/slicemodelview/list/'
         datasource_class = models.SqlaTable \
             if datasource_type == "table" else models.DruidDatasource
         datasources = (
@@ -469,6 +471,7 @@ class Caravel(BaseView):
             )
         if not datasource:
             flash("The datasource seems to have been deleted", "alert")
+            return redirect(error_redirect)
 
         all_datasource_access = self.appbuilder.sm.has_access(
             'all_datasource_access', 'all_datasource_access')
@@ -476,7 +479,7 @@ class Caravel(BaseView):
             'datasource_access', datasource.perm)
         if not (all_datasource_access or datasource_access):
             flash("You don't seem to have access to this datasource", "danger")
-            return redirect('/slicemodelview/list/')
+            return redirect(error_redirect)
 
         action = request.args.get('action')
         if action in ('save', 'overwrite'):
@@ -487,10 +490,14 @@ class Caravel(BaseView):
             return redirect(datasource.default_endpoint)
         if not viz_type:
             viz_type = "table"
-        obj = viz.viz_types[viz_type](
-            datasource,
-            form_data=request.args,
-            slice_=slc)
+        try:
+            obj = viz.viz_types[viz_type](
+                datasource,
+                form_data=request.args,
+                slice_=slc)
+        except Exception as e:
+            flash(str(e), "danger")
+            return redirect(error_redirect)
         if request.args.get("json") == "true":
             status = 200
             try:

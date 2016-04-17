@@ -69,7 +69,7 @@ class AuditMixinNullable(AuditMixin):
     def created_by_(self):  # noqa
         return '{}'.format(self.created_by or '')
 
-    @property # noqa
+    @property  # noqa
     def changed_by_(self):
         return '{}'.format(self.changed_by or '')
 
@@ -406,7 +406,7 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
 
     __tablename__ = 'tables'
     id = Column(Integer, primary_key=True)
-    table_name = Column(String(250), unique=True)
+    table_name = Column(String(250))
     main_dttm_col = Column(String(250))
     description = Column(Text)
     default_endpoint = Column(Text)
@@ -421,6 +421,11 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
     schema = Column(String(256))
 
     baselink = "tablemodelview"
+
+    __table_args__ = (
+        sqla.UniqueConstraint(
+            'database_id', 'schema', 'table_name',
+            name='_customer_location_uc'),)
 
     def __repr__(self):
         return self.table_name
@@ -699,14 +704,16 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
             if not dbcol:
                 dbcol = TableColumn(column_name=col.name)
                 num_types = ('DOUBLE', 'FLOAT', 'INT', 'BIGINT', 'LONG')
+                date_types = ('DATE', 'TIME')
+                str_types = ('VARCHAR', 'STRING')
                 datatype = str(datatype).upper()
-                if (
-                        str(datatype).startswith('VARCHAR') or
-                        str(datatype).startswith('STRING')):
+                if any([t in datatype for t in str_types]):
                     dbcol.groupby = True
                     dbcol.filterable = True
                 elif any([t in datatype for t in num_types]):
                     dbcol.sum = True
+                elif any([t in datatype for t in date_types]):
+                    dbcol.is_dttm = True
             db.session.merge(self)
             self.columns.append(dbcol)
 
@@ -1018,6 +1025,10 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
                 granularity).total_seconds() * 1000
         if not isinstance(granularity, string_types):
             granularity = {"type": "duration", "duration": granularity}
+            origin = extras.get('druid_time_origin')
+            if origin:
+                dttm = utils.parse_human_datetime(origin)
+                granularity['origin'] = dttm.isoformat()
 
         qry = dict(
             datasource=self.datasource_name,
