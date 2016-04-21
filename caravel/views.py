@@ -140,7 +140,6 @@ class DatabaseView(CaravelModelView, DeleteMixin):  # noqa
     order_columns = utils.list_minus(list_columns, ['created_by_'])
     add_columns = [
         'database_name', 'sqlalchemy_uri', 'cache_timeout', 'extra']
-    show_columns = add_columns
     search_exclude_columns = ('password',)
     edit_columns = add_columns
     add_template = "caravel/models/database/add.html"
@@ -366,13 +365,13 @@ class DruidDatasourceModelView(CaravelModelView, DeleteMixin):  # noqa
         'created_by_', 'created_on',
         'changed_by_', 'changed_on',
         'offset']
-    order_columns = utils.list_minus(
-        list_columns, ['created_by_', 'changed_by_'])
-    related_views = [DruidColumnInlineView, DruidMetricInlineView]
+    related_views = [
+        DruidColumnInlineView, DruidMetricInlineView]
     edit_columns = [
         'datasource_name', 'cluster', 'description', 'owner',
         'is_featured', 'is_hidden', 'default_endpoint', 'offset',
         'cache_timeout']
+    add_columns = edit_columns
     page_size = 500
     base_order = ('datasource_name', 'asc')
     description_columns = {
@@ -416,7 +415,6 @@ class R(BaseView):
     def index(self, url_id):
         url = db.session.query(models.Url).filter_by(id=url_id).first()
         if url:
-            print(url.url)
             return redirect('/' + url.url)
         else:
             flash("URL to nowhere...", "danger")
@@ -463,6 +461,13 @@ class Caravel(BaseView):
         datasource = datasource[0] if datasource else None
         slice_id = request.args.get("slice_id")
         slc = None
+        slice_add_perm = self.appbuilder.sm.has_access(
+            'can_add', 'SliceModelView')
+        slice_edit_perm = self.appbuilder.sm.has_access(
+            'can_edit', 'SliceModelView')
+        slice_download_perm = self.appbuilder.sm.has_access(
+            'can_download', 'SliceModelView')
+
         if slice_id:
             slc = (
                 db.session.query(models.Slice)
@@ -483,7 +488,8 @@ class Caravel(BaseView):
 
         action = request.args.get('action')
         if action in ('save', 'overwrite'):
-            return self.save(request.args, slc)
+            return self.save_or_overwrite_slice(
+                request.args, slc, slice_add_perm, slice_edit_perm)
 
         viz_type = request.args.get("viz_type")
         if not viz_type and datasource.default_endpoint:
@@ -529,7 +535,9 @@ class Caravel(BaseView):
                 template = "caravel/explore.html"
 
             resp = self.render_template(
-                template, viz=obj, slice=slc, datasources=datasources)
+                template, viz=obj, slice=slc, datasources=datasources,
+                can_add=slice_add_perm, can_edit=slice_edit_perm,
+                can_download=slice_download_perm)
             try:
                 pass
             except Exception as e:
@@ -541,9 +549,8 @@ class Caravel(BaseView):
                     mimetype="application/json")
             return resp
 
-    def save(self, args, slc):
-        """Saves (inserts or overwrite a slice) """
-        session = db.session()
+    def save_or_overwrite_slice(self, args, slc, slice_add_perm, slice_edit_perm):
+        """save or overwrite a slice"""
         slice_name = args.get('slice_name')
         action = args.get('action')
 
@@ -568,9 +575,6 @@ class Caravel(BaseView):
 
         if action == "save":
             slc = models.Slice()
-            msg = "Slice [{}] has been saved".format(slice_name)
-        elif action == "overwrite":
-            msg = "Slice [{}] has been overwritten".format(slice_name)
 
         slc.params = json.dumps(d, indent=4, sort_keys=True)
         slc.datasource_name = args.get('datasource_name')
@@ -580,13 +584,26 @@ class Caravel(BaseView):
         slc.datasource_type = datasource_type
         slc.slice_name = slice_name
 
-        if action == "save":
-            session.add(slc)
-        elif action == "overwrite":
-            session.merge(slc)
+        if action == 'save' and slice_add_perm:
+            self.save_slice(slc)
+        elif action == 'overwrite' and slice_edit_perm:
+            self.overwrite_slice(slc)
+
+        return redirect(slc.slice_url)
+
+    def save_slice(self, slc):
+        session = db.session()
+        msg = "Slice [{}] has been saved".format(slc.slice_name)
+        session.add(slc)
         session.commit()
         flash(msg, "info")
-        return redirect(slc.slice_url)
+
+    def overwrite_slice(self, slc):
+        session = db.session()
+        msg = "Slice [{}] has been overwritten".format(slc.slice_name)
+        session.merge(slc)
+        session.commit()
+        flash(msg, "info")
 
     @has_access
     @expose("/checkbox/<model_view>/<id_>/<attr>/<value>", methods=['GET'])
@@ -711,12 +728,21 @@ class Caravel(BaseView):
         return self.render_template(
             "caravel/dashboard.html", dashboard=dash,
             templates=templates,
-            pos_dict=pos_dict)
+            pos_dict=pos_dict,
+            dash_save_perm=appbuilder.sm.has_access('can_save_dash', 'Caravel'),
+            dash_edit_perm=appbuilder.sm.has_access('can_edit', 'DashboardModelView'))
 
     @has_access
     @expose("/sql/<database_id>/")
     @log_this
     def sql(self, database_id):
+        if (
+                not self.appbuilder.sm.has_access(
+                    'all_datasource_access', 'all_datasource_access')):
+            flash(
+                "This view requires the `all_datasource_access` "
+                "permission", "danger")
+            return redirect("/tablemodelview/list/")
         mydb = db.session.query(
             models.Database).filter_by(id=database_id).first()
         engine = mydb.get_sqla_engine()
@@ -778,7 +804,8 @@ class Caravel(BaseView):
         if (
                 not self.appbuilder.sm.has_access(
                     'all_datasource_access', 'all_datasource_access')):
-            raise Exception("test")
+            raise Exception(
+                "This view requires the `all_datasource_access` permission")
         content = ""
         if mydb:
             eng = mydb.get_sqla_engine()

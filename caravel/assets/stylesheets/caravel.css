@@ -29,6 +29,10 @@ input.form-control {
     color: red;
 }
 
+.disabledButton {
+    pointer-events: none;
+}
+
 .col-left-fixed {
     width:350px;
     position: absolute;
@@ -180,6 +184,7 @@ img.loading {
 .dashboard img.loading {
   width: 20px;
   margin: 5px;
+  position: absolute;
 }
 img.viz-thumb-option {
     width: 100px;
