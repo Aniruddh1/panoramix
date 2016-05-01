@@ -13,11 +13,14 @@ require('./caravel-select2.js');
 require('../node_modules/gridster/dist/jquery.gridster.min.css');
 require('../node_modules/gridster/dist/jquery.gridster.min.js');
 
+require('../stylesheets/dashboard.css');
+
 var Dashboard = function (dashboardData) {
   var dashboard = $.extend(dashboardData, {
     filters: {},
     init: function () {
       this.initDashboardView();
+      this.firstLoad = true;
       px.initFavStars();
       var sliceObjects = [],
         dash = this;
@@ -73,15 +76,17 @@ var Dashboard = function (dashboardData) {
     startPeriodicRender: function (interval) {
       this.stopPeriodicRender();
       var dash = this;
-      var maxRandomDelay = Math.min(interval * 0.1, 5000);
+      var maxRandomDelay = Math.min(interval * 0.2, 5000);
       var refreshAll = function () {
         dash.slices.forEach(function (slice) {
+          var force = !dash.firstLoad;
           setTimeout(function () {
-                slice.render(true);
-              },
-              //Randomize to prevent all widgets refreshing at the same time
-              maxRandomDelay * Math.random());
+            slice.render(force);
+          },
+          //Randomize to prevent all widgets refreshing at the same time
+          maxRandomDelay * Math.random());
         });
+        dash.firstLoad = false;
       };
 
       var fetchAndRender = function () {
@@ -95,7 +100,7 @@ var Dashboard = function (dashboardData) {
       fetchAndRender();
     },
     refreshExcept: function (slice_id) {
-      var immune = this.metadata.filter_immune_slice || [];
+      var immune = this.metadata.filter_immune_slices || [];
       this.slices.forEach(function (slice) {
         if (slice.data.slice_id !== slice_id && immune.indexOf(slice.data.slice_id) === -1) {
           slice.render();
