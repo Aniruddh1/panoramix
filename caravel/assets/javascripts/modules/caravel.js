@@ -1,6 +1,7 @@
 var $ = require('jquery');
 var jQuery = $;
 var d3 = require('d3');
+var Mustache = require('mustache');
 
 // vis sources
 var sourceMap = {
@@ -26,7 +27,9 @@ var sourceMap = {
   table: 'table.js',
   word_cloud: 'word_cloud.js',
   world_map: 'world_map.js',
-  treemap: 'treemap.js'
+  treemap: 'treemap.js',
+  cal_heatmap: 'cal_heatmap.js',
+  horizon: 'horizon.js'
 };
 
 var color = function () {
@@ -48,6 +51,7 @@ var color = function () {
     var seen = {};
     return function (s) {
       if (!s) { return; }
+      s = String(s);
       // next line is for caravel series that should have the same color
       s = s.replace('---', '');
       if (seen[s] === undefined) {
@@ -109,7 +113,7 @@ var px = (function () {
     ["%a %b %d, %I %p", function (d) {
       return d.getHours() !== 0;
     }], // If there are hours that are multiples of 3, show date and AM/PM
-    ["%a %b %d, %Y", function (d) {
+    ["%a %b %d", function (d) {
       return d.getDate() !== 1;
     }], // If not the first of the month, do "month day, year."
     ["%B %Y", function (d) {
@@ -212,7 +216,14 @@ var px = (function () {
         return qrystr;
       },
       getWidgetHeader: function () {
-        return this.container.parents("li.widget").find(".chart-header");
+        return this.container.parents("div.widget").find(".chart-header");
+      },
+      render_template: function (s) {
+        var context = {
+          width: this.width,
+          height: this.height
+        };
+        return Mustache.render(s, context);
       },
       jsonEndpoint: function () {
         var parser = document.createElement('a');
@@ -265,9 +276,6 @@ var px = (function () {
         $('#json').click(function () {
           window.location = data.json_endpoint;
         });
-        $('#standalone').click(function () {
-          window.location = data.standalone_endpoint;
-        });
         $('#csv').click(function () {
           window.location = data.csv_endpoint;
         });
@@ -275,9 +283,27 @@ var px = (function () {
         $('.query-and-save button').removeAttr('disabled');
         always(data);
       },
-      error: function (msg) {
+      getErrorMsg: function (xhr) {
+        if (xhr.statusText === "timeout") {
+          return "The request timed out";
+        }
+        var msg = "";
+        if (!xhr.responseText) {
+          var status = xhr.status;
+          msg += "An unknown error occurred. (Status: " + status + ")";
+          if (status === 0) {
+            // This may happen when the worker in gunicorn times out
+            msg += " Maybe the request timed out?";
+          }
+        }
+        return msg;
+      },
+      error: function (msg, xhr) {
         token.find("img.loading").hide();
-        var err = '<div class="alert alert-danger">' + msg + '</div>';
+        var err = msg ? ('<div class="alert alert-danger">' + msg + '</div>') : "";
+        if (xhr) {
+          err += '<div class="alert alert-danger">' + this.getErrorMsg(xhr) + '</div>';
+        }
         container.html(err);
         container.show();
         $('span.query').removeClass('disabled');

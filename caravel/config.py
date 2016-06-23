@@ -1,7 +1,7 @@
 """The main config file for Caravel
 
-All configuration in this file can be overridden by providing a local_config
-in your PYTHONPATH as there is a ``from local_config import *``
+All configuration in this file can be overridden by providing a caravel_config
+in your PYTHONPATH as there is a ``from caravel_config import *``
 at the end of this file.
 """
 from __future__ import absolute_import
@@ -18,10 +18,10 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 
 
 # ---------------------------------------------------------
-# Caravel specifix config
+# Caravel specific config
 # ---------------------------------------------------------
 ROW_LIMIT = 50000
-WEBSERVER_THREADS = 8
+CARAVEL_WORKERS = 16
 
 CARAVEL_WEBSERVER_PORT = 8088
 CARAVEL_WEBSERVER_TIMEOUT = 60
@@ -53,7 +53,7 @@ SHOW_STACKTRACE = True
 APP_NAME = "Caravel"
 
 # Uncomment to setup Setup an App icon
-# APP_ICON = "/static/img/something.png"
+APP_ICON = "/static/assets/images/caravel_logo.png"
 
 # Druid query timezone
 # tz.tzutc() : Using utc timezone
@@ -93,6 +93,15 @@ AUTH_TYPE = AUTH_DB
 #    { 'name': 'AOL', 'url': 'http://openid.aol.com/<username>' },
 #    { 'name': 'Flickr', 'url': 'http://www.flickr.com/<username>' },
 #    { 'name': 'MyOpenID', 'url': 'https://www.myopenid.com' }]
+
+# ---------------------------------------------------
+# Roles config
+# ---------------------------------------------------
+# Grant public role the same set of permissions as for the GAMMA role.
+# This is useful if one wants to enable anonymous users to view
+# dashboards. Explicit grant on specific datasets is still required.
+PUBLIC_ROLE_LIKE_GAMMA = False
+
 # ---------------------------------------------------
 # Babel config for translations
 # ---------------------------------------------------
@@ -122,6 +131,10 @@ IMG_UPLOAD_URL = '/static/uploads/'
 
 CACHE_DEFAULT_TIMEOUT = None
 CACHE_CONFIG = {'CACHE_TYPE': 'null'}
+
+# CORS Options
+ENABLE_CORS = False
+CORS_OPTIONS = {}
 
 
 # ---------------------------------------------------
@@ -163,9 +176,8 @@ BACKUP_COUNT = 30
 
 try:
     from caravel_config import *  # noqa
-except Exception:
+except ImportError:
     pass
 
 if not CACHE_DEFAULT_TIMEOUT:
     CACHE_DEFAULT_TIMEOUT = CACHE_CONFIG.get('CACHE_DEFAULT_TIMEOUT')
-

@@ -102,11 +102,10 @@ echo prefix=~/.npm-packages >> ~/.npmrc
 curl -L https://www.npmjs.com/install.sh | sh
 ```
 
-The final step is to add
-`~/.node/bin` to your `PATH` so commands you install globally are usable.
-Add something like this to your `.bashrc` file.
+The final step is to add `~/.npm-packages/bin` to your `PATH` so commands you install globally are usable.
+Add something like this to your `.bashrc` file, then `source ~/.bashrc` to reflect the change.
 ```
-export PATH="$HOME/.node/bin:$PATH"
+export PATH="$HOME/.npm-packages/bin:$PATH"
 ```
 
 #### npm packages
@@ -185,7 +184,7 @@ meets these guidelines:
 5.  Please rebase and resolve all conflicts before submitting.
 
 
-## Tranlations
+## Translations
 
 We use [Babel](http://babel.pocoo.org/en/latest/) to translate Caravel. The
 key is to instrument the strings that need translation using

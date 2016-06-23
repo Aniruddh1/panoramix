@@ -28,7 +28,7 @@ the required dependencies are installed: ::
 
 For **Fedora** and **RHEL-derivatives**, the following command will ensure
 that the required dependencies are installed: ::
-    
+
     sudo yum upgrade python-setuptools
     sudo yum install gcc libffi-devel python-devel python-pip python-wheel openssl-devel
 
@@ -68,8 +68,11 @@ Follow these few simple steps to install Caravel.::
     # Load some data to play with
     caravel load_examples
 
-    # Start the development web server
-    caravel runserver -d
+    # Start the web server on port 8088
+    caravel runserver -p 8088
+
+    # To start a development web server, use the -d switch
+    # caravel runserver -d
 
 
 After installation, you should be able to point your browser to the right
@@ -78,6 +81,15 @@ the credential you entered while creating the admin account, and navigate to
 `Menu -> Admin -> Refresh Metadata`. This action should bring in all of
 your datasources for Caravel to be aware of, and they should show up in
 `Menu -> Datasources`, from where you can start playing with your data!
+
+Configuration behind a load balancer
+------------------------------------
+
+If you are running caravel behind a load balancer or reverse proxy (e.g. NGINX
+or ELB on AWS), you may need to utilise a healthcheck endpoint so that your
+load balancer knows if your caravel instance is running. This is provided
+at ``/health`` which will return a 200 response containing "OK" if the
+webserver is running.
 
 
 Configuration
@@ -88,10 +100,10 @@ To configure your application, you need to create a file (module)
 of the parameters you can copy / paste in that configuration module: ::
 
     #---------------------------------------------------------
-    # Caravel specifix config
+    # Caravel specific config
     #---------------------------------------------------------
     ROW_LIMIT = 5000
-    WEBSERVER_THREADS = 8
+    CARAVEL_WORKERS = 16
 
     CARAVEL_WEBSERVER_PORT = 8088
     #---------------------------------------------------------
@@ -145,6 +157,8 @@ Here's a list of some of the recommended packages.
 |  Redshift     | ``pip install sqlalchemy-redshift`` | ``redshift+psycopg2://``                        |
 +---------------+-------------------------------------+-------------------------------------------------+
 |  MSSQL        | ``pip install pymssql``             | ``mssql://``                                    |
++---------------+-------------------------------------+-------------------------------------------------+
+|  Impala       | ``pip install impyla``              | ``impala://``                                   |
 +---------------+-------------------------------------+-------------------------------------------------+
 
 Note that many other database are supported, the main criteria being the
@@ -227,6 +241,20 @@ Druid
 Note that you can run the ``caravel refresh_druid`` command to refresh the
 metadata from your Druid cluster(s)
 
+
+CORS
+-----
+
+The extra CORS Dependency must be installed:
+
+    caravel[cors]
+
+
+The following keys in `caravel_config.py` can be specified to configure CORS:
+
+
+* ``ENABLE_CORS``: Must be set to True in order to enable CORS
+* ``CORS_OPTIONS``: options passed to Flask-CORS (`documentation <http://flask-cors.corydolphin.com/en/latest/api.html#extension>`)
 
 Upgrading
 ---------

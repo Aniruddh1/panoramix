@@ -71,7 +71,7 @@ function filterBox(slice) {
         }
       })
       .fail(function (xhr) {
-        slice.error(xhr.responseText);
+        slice.error(xhr.responseText, xhr);
       });
   };
   return {

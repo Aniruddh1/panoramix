@@ -23,35 +23,35 @@ require('../node_modules/bootstrap-toggle/css/bootstrap-toggle.min.css');
 
 var slice;
 
+var getPanelClass = function (fieldPrefix) {
+  return (fieldPrefix === "flt" ? "filter" : "having") + "_panel";
+};
+
 function prepForm() {
-  var i = 1;
   // Assigning the right id to form elements in filters
-  $("#filters > div").each(function () {
-    $(this).attr("id", function () {
-        return "flt_" + i;
-      });
-    $(this).find("#flt_col_0")
-      .attr("id", function () {
-        return "flt_col_" + i;
-      })
-      .attr("name", function () {
-        return "flt_col_" + i;
-      });
-    $(this).find("#flt_op_0")
-      .attr("id", function () {
-        return "flt_op_" + i;
-      })
-      .attr("name", function () {
-        return "flt_op_" + i;
-      });
-    $(this).find("#flt_eq_0")
-      .attr("id", function () {
-        return "flt_eq_" + i;
-      })
-      .attr("name", function () {
-        return "flt_eq_" + i;
-      });
-    i++;
+  var fixId = function ($filter, fieldPrefix, i) {
+    $filter.attr("id", function () {
+      return fieldPrefix + "_" + i;
+    });
+
+    ["col", "op", "eq"].forEach(function (fieldMiddle) {
+      var fieldName = fieldPrefix + "_" + fieldMiddle;
+      $filter.find("#" + fieldName + "_0")
+          .attr("id", function () {
+            return fieldName + "_" + i;
+          })
+          .attr("name", function () {
+            return fieldName + "_" + i;
+          });
+    });
+  };
+
+  ["flt", "having"].forEach(function (fieldPrefix) {
+    var i = 1;
+    $("#" + getPanelClass(fieldPrefix) + " #filters > div").each(function () {
+      fixId($(this), fieldPrefix, i);
+      i++;
+    });
   });
 }
 
@@ -59,14 +59,17 @@ function query(force, pushState) {
   if (force === undefined) {
     force = false;
   }
-  if (pushState !== false) {
-    history.pushState({}, document.title, slice.querystring());
-  }
   $('.query-and-save button').attr('disabled', 'disabled');
   $('.btn-group.results span,a').attr('disabled', 'disabled');
-  $('div.alert').remove();
+  if (force) {  // Don't hide the alert message when the page is just loaded
+    $('div.alert').remove();
+  }
   $('#is_cached').hide();
   prepForm();
+  if (pushState !== false) {
+    // update the url after prepForm() fix the field ids
+    history.pushState({}, document.title, slice.querystring());
+  }
   slice.render(force);
 }
 
@@ -194,6 +197,60 @@ function initExploreView() {
     });
   });
 
+  $('#standalone').click(function () {
+    var src_link = window.location.origin + slice.data.standalone_endpoint;
+    var dataToCopy = '';
+    var close = '<a style="cursor: pointer;"><i class="fa fa-close" id="close_standalone"></i></a>';
+    var copy = '<a style="cursor: pointer;"><i class="fa fa-clipboard" title="Copy to clipboard" id="copy_embed"></i></a>';
+    var spaces = '&nbsp;&nbsp;&nbsp;';
+    var widthInput = '<input type="number" id="standalone_width" placeholder="width">';
+    var heightInput = '<input type="number" id="standalone_height" placeholder="height">';
+    var popover = "<input id='standalone_text' value='' disabled></input>";
+    popover = popover + spaces + copy + spaces + close + spaces + widthInput + spaces + heightInput;
+
+    var $standalone = $(this);
+    $standalone.popover({
+      content: popover,
+      title: 'embed html',
+      placement: 'left',
+      html: true,
+      trigger: 'manual'
+    })
+    .popover('show');
+    $('#copy_embed').tooltip().click(function () {
+      var success = copyURLToClipboard(dataToCopy);
+      if (success) {
+        $(this).attr("data-original-title", "Copied!").tooltip('fixTitle').tooltip('show');
+        window.setTimeout(destroyPopover, 1200);
+      }
+    });
+
+    $('#close_standalone').click(destroyPopover);
+
+    function destroyPopover() {
+      $standalone.popover('destroy');
+    }
+
+    var $standalone_width = $('#standalone_width');
+    var $standalone_height = $('#standalone_height');
+    var $standalone_text = $('#standalone_text');
+
+    $standalone_height.change(function () {
+      generateEmbedHTML();
+    });
+    $standalone_width.change(function () {
+      generateEmbedHTML();
+    });
+    generateEmbedHTML();
+    function generateEmbedHTML() {
+      var width = $standalone_width.val();
+      var height = $standalone_height.val();
+      dataToCopy = '<iframe src="' + src_link + '" width="' + width + '" height="' + height +'"';
+      dataToCopy = dataToCopy + ' seamless frameBorder="0" scrolling="no"></iframe>';
+      $standalone_text.val(dataToCopy);
+    }
+  });
+
   $("#viz_type").change(function () {
     $("#query").submit();
   });
@@ -235,23 +292,26 @@ function initExploreView() {
   $(".ui-helper-hidden-accessible").remove(); // jQuery-ui 1.11+ creates a div for every tooltip
 
   function set_filters() {
-    for (var i = 1; i < 10; i++) {
-      var eq = px.getParam("flt_eq_" + i);
-      if (eq !== '') {
-        add_filter(i);
+    ["flt", "having"].forEach(function (prefix) {
+      for (var i = 1; i < 10; i++) {
+        var eq = px.getParam(prefix + "_eq_" + i);
+        var col = px.getParam(prefix + "_col_" + i);
+        if (eq !== '' && col !== '') {
+          add_filter(i, prefix);
+        }
       }
-    }
+    });
   }
   set_filters();
 
-  function add_filter(i) {
-    var cp = $("#flt0").clone();
-    $(cp).appendTo("#filters");
+  function add_filter(i, fieldPrefix) {
+    var cp = $("#"+fieldPrefix+"0").clone();
+    $(cp).appendTo("#" + getPanelClass(fieldPrefix) + " #filters");
     $(cp).show();
     if (i !== undefined) {
-      $(cp).find("#flt_eq_0").val(px.getParam("flt_eq_" + i));
-      $(cp).find("#flt_op_0").val(px.getParam("flt_op_" + i));
-      $(cp).find("#flt_col_0").val(px.getParam("flt_col_" + i));
+      $(cp).find("#"+fieldPrefix+"_eq_0").val(px.getParam(fieldPrefix+"_eq_" + i));
+      $(cp).find("#"+fieldPrefix+"_op_0").val(px.getParam(fieldPrefix+"_op_" + i));
+      $(cp).find("#"+fieldPrefix+"_col_0").val(px.getParam(fieldPrefix+"_col_" + i));
     }
     $(cp).find('select').select2();
     $(cp).find('.remove').click(function () {
@@ -267,7 +327,12 @@ function initExploreView() {
     returnLocation.reload();
   });
 
-  $("#plus").click(add_filter);
+  $("#filter_panel #plus").click(function () {
+    add_filter(undefined, "flt");
+  });
+  $("#having_panel #plus").click(function () {
+    add_filter(undefined, "having");
+  });
   $("#btn_save").click(function () {
     var slice_name = prompt("Name your slice!");
     if (slice_name !== "" && slice_name !== null) {

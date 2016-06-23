@@ -20,14 +20,15 @@ import sqlparse
 from dateutil.parser import parse
 
 from flask import request, g
-from flask.ext.appbuilder import Model
-from flask.ext.appbuilder.models.mixins import AuditMixin
-from flask.ext.appbuilder.models.decorators import renders
-from flask.ext.babelpkg import gettext as _
+from flask_appbuilder import Model
+from flask_appbuilder.models.mixins import AuditMixin
+from flask_appbuilder.models.decorators import renders
+from flask_babelpkg import lazy_gettext as _
 
 from pydruid.client import PyDruid
 from pydruid.utils.filters import Dimension, Filter
 from pydruid.utils.postaggregator import Postaggregator
+from pydruid.utils.having import Having, Aggregation
 from six import string_types
 from sqlalchemy import (
     Column, Integer, String, ForeignKey, Text, Boolean, DateTime, Date,
@@ -38,9 +39,10 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import table, literal_column, text, column
 from sqlalchemy_utils import EncryptedType
 
-from caravel import app, db, get_session, utils
+import caravel
+from caravel import app, db, get_session, utils, sm
 from caravel.viz import viz_types
-from caravel.utils import flasher
+from caravel.utils import flasher, MetricPermException, DimSelector
 
 config = app.config
 
@@ -88,6 +90,10 @@ class AuditMixinNullable(AuditMixin):
     @renders('changed_by')
     def changed_by_(self):
         return '{}'.format(self.changed_by or '')
+
+    @renders('changed_on')
+    def changed_on_(self):
+        return '<span class="no-wrap">{}</span>'.format(self.changed_on)
 
     @renders('changed_on')
     def modified(self):
@@ -193,6 +199,7 @@ class Slice(Model, AuditMixinNullable):
 
     @property
     def data(self):
+        """Data used to render slice in templates"""
         d = {}
         self.token = ''
         try:
@@ -201,6 +208,11 @@ class Slice(Model, AuditMixinNullable):
         except Exception as e:
             d['error'] = str(e)
         d['slice_id'] = self.id
+        d['slice_name'] = self.slice_name
+        d['description'] = self.description
+        d['slice_url'] = self.slice_url
+        d['edit_url'] = self.edit_url
+        d['description_markeddown'] = self.description_markeddown
         return d
 
     @property
@@ -284,6 +296,10 @@ class Dashboard(Model, AuditMixinNullable):
         return self.dashboard_title
 
     @property
+    def table_names(self):
+        return ", ".join({"{}".format(s.datasource) for s in self.slices})
+
+    @property
     def url(self):
         return "/caravel/dashboard/{}/".format(self.slug or self.id)
 
@@ -305,6 +321,7 @@ class Dashboard(Model, AuditMixinNullable):
             'dashboard_title': self.dashboard_title,
             'slug': self.slug,
             'slices': [slc.data for slc in self.slices],
+            'position_json': json.loads(self.position_json) if self.position_json else [],
         }
         return json.dumps(d)
 
@@ -336,6 +353,14 @@ class Queryable(object):
     @property
     def url(self):
         return '/{}/edit/{}'.format(self.baselink, self.id)
+
+    @property
+    def explore_url(self):
+        if self.default_endpoint:
+            return self.default_endpoint
+        else:
+            return "/caravel/explore/{obj.type}/{obj.id}/".format(obj=self)
+
 
 
 class Database(Model, AuditMixinNullable):
@@ -375,40 +400,67 @@ class Database(Model, AuditMixinNullable):
         each database has slightly different but similar datetime functions,
         this allows a mapping between database engines and actual functions.
         """
-        Grain = namedtuple('Grain', 'name function')
+        Grain = namedtuple('Grain', 'name label function')
         db_time_grains = {
             'presto': (
-                Grain('Time Column', '{col}'),
-                Grain('week', "date_trunc('week', CAST({col} AS DATE))"),
-                Grain('month', "date_trunc('month', CAST({col} AS DATE))"),
-                Grain("week_ending_saturday", "date_add('day', 5, "
+                Grain('Time Column', _('Time Column'), '{col}'),
+                Grain('week', _('week'), "date_trunc('week', CAST({col} AS DATE))"),
+                Grain('month', _('month'), "date_trunc('month', CAST({col} AS DATE))"),
+                Grain("week_ending_saturday", _('week_ending_saturday'), "date_add('day', 5, "
                       "date_trunc('week', date_add('day', 1, CAST({col} AS DATE))))"),
-                Grain("week_start_sunday", "date_add('day', -1, "
+                Grain("week_start_sunday", _('week_start_sunday'), "date_add('day', -1, "
                       "date_trunc('week', date_add('day', 1, CAST({col} AS DATE))))")
             ),
             'mysql': (
-                Grain('Time Column', '{col}'),
-                Grain('day', 'DATE({col})'),
-                Grain("week", "DATE(DATE_SUB({col}, "
+                Grain('Time Column', _('Time Column'), '{col}'),
+                Grain("hour", _('hour'), "DATE_ADD(DATE({col}), "
+                      "INTERVAL HOUR({col}) HOUR)"),
+                Grain('day', _('day'), 'DATE({col})'),
+                Grain("week", _('week'), "DATE(DATE_SUB({col}, "
                       "INTERVAL DAYOFWEEK({col}) - 1 DAY))"),
-                Grain("month", "DATE(DATE_SUB({col}, "
+                Grain("month", _('month'), "DATE(DATE_SUB({col}, "
                       "INTERVAL DAYOFMONTH({col}) - 1 DAY))"),
             ),
+            'sqlite': (
+                Grain('Time Column', _('Time Column'), '{col}'),
+                Grain('day', _('day'), 'DATE({col})'),
+                Grain("week", _('week'), "DATE({col}, -strftime('%w', {col}) || ' days')"),
+                Grain("month", _('month'), "DATE({col}, -strftime('%d', {col}) || ' days')"),
+            ),
             'postgresql': (
-                Grain("Time Column", "{col}"),
-                Grain("second", "DATE_TRUNC('second', {col})"),
-                Grain("minute", "DATE_TRUNC('minute', {col})"),
-                Grain("hour", "DATE_TRUNC('hour', {col})"),
-                Grain("day", "DATE_TRUNC('day', {col})"),
-                Grain("week", "DATE_TRUNC('week', {col})"),
-                Grain("month", "DATE_TRUNC('month', {col})"),
-                Grain("year", "DATE_TRUNC('year', {col})"),
+                Grain("Time Column", _('Time Column'), "{col}"),
+                Grain("second", _('second'), "DATE_TRUNC('second', {col})"),
+                Grain("minute", _('minute'), "DATE_TRUNC('minute', {col})"),
+                Grain("hour", _('hour'), "DATE_TRUNC('hour', {col})"),
+                Grain("day", _('day'), "DATE_TRUNC('day', {col})"),
+                Grain("week", _('week'), "DATE_TRUNC('week', {col})"),
+                Grain("month", _('month'), "DATE_TRUNC('month', {col})"),
+                Grain("year", _('year'), "DATE_TRUNC('year', {col})"),
             ),
         }
         db_time_grains['redshift'] = db_time_grains['postgresql']
+        db_time_grains['vertica'] = db_time_grains['postgresql']
         for db_type, grains in db_time_grains.items():
             if self.sqlalchemy_uri.startswith(db_type):
                 return grains
+
+    def dttm_converter(self, dttm):
+        """Returns a string that the database flavor understands as a date"""
+        default = "'{}'".format(dttm.strftime('%Y-%m-%d %H:%M:%S.%f'))
+        iso = dttm.isoformat()
+        d = {
+            'mssql': "CONVERT(DATETIME, '{}', 126)".format(iso), #untested
+            'mysql': default,
+            'oracle':
+                """TO_TIMESTAMP('{}', 'YYYY-MM-DD"T"HH24:MI:SS.ff6')""".format(
+                    dttm.isoformat()),
+            'presto': default,
+            'sqlite': default,
+        }
+        for k, v in d.items():
+            if self.sqlalchemy_uri.startswith(k):
+                return v
+        return default
 
     def grains_dict(self):
         return {grain.name: grain for grain in self.grains()}
@@ -471,7 +523,7 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
         'Database', backref='tables', foreign_keys=[database_id])
     offset = Column(Integer, default=0)
     cache_timeout = Column(Integer)
-    schema = Column(String(256))
+    schema = Column(String(255))
 
     baselink = "tablemodelview"
 
@@ -528,13 +580,6 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
     @property
     def name(self):
         return self.table_name
-
-    @property
-    def explore_url(self):
-        if self.default_endpoint:
-            return self.default_endpoint
-        else:
-            return "/caravel/explore/{obj.type}/{obj.id}/".format(obj=self)
 
     @property
     def table_link(self):
@@ -600,7 +645,7 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
             for s in groupby:
                 col = cols[s]
                 outer = col.sqla_col
-                inner = col.sqla_col.label('__' + col.column_name)
+                inner = col.sqla_col.label(col.column_name + '__')
 
                 groupby_exprs.append(outer)
                 select_exprs.append(outer)
@@ -642,14 +687,16 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
 
             tf = get_dtformat(cols[granularity].type or 'DATE')
             time_filter = [
-                timestamp >= from_dttm.strftime(tf),
-                timestamp <= to_dttm.strftime(tf),
+                timestamp >= text(self.database.dttm_converter(from_dttm)),
+                timestamp <= text(self.database.dttm_converter(to_dttm)),
             ]
             inner_time_filter = copy(time_filter)
             if inner_from_dttm:
-                inner_time_filter[0] = timestamp >= inner_from_dttm.strftime(tf)
+                inner_time_filter[0] = timestamp >= text(
+                    self.database.dttm_converter(inner_from_dttm))
             if inner_to_dttm:
-                inner_time_filter[1] = timestamp <= inner_to_dttm.strftime(tf)
+                inner_time_filter[1] = timestamp <= text(
+                    self.database.dttm_converter(inner_to_dttm))
         else:
             inner_time_filter = []
 
@@ -696,7 +743,7 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
             on_clause = []
             for i, gb in enumerate(groupby):
                 on_clause.append(
-                    groupby_exprs[i] == column("__" + gb))
+                    groupby_exprs[i] == column(gb + '__'))
 
             tbl = tbl.join(subq.alias(), and_(*on_clause))
 
@@ -707,7 +754,6 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
             qry.compile(
                 engine, compile_kwargs={"literal_binds": True},),
             )
-        print(sql)
         df = pd.read_sql_query(
             sql=sql,
             con=engine
@@ -832,11 +878,19 @@ class SqlMetric(Model, AuditMixinNullable):
         'SqlaTable', backref='metrics', foreign_keys=[table_id])
     expression = Column(Text)
     description = Column(Text)
+    is_restricted = Column(Boolean, default=False, nullable=True)
 
     @property
     def sqla_col(self):
         name = self.metric_name
         return literal_column(self.expression).label(name)
+
+    @property
+    def perm(self):
+        return (
+            "{parent_name}.[{obj.metric_name}](id:{obj.id})"
+        ).format(obj=self,
+                 parent_name=self.table.full_name) if self.table else None
 
 
 class TableColumn(Model, AuditMixinNullable):
@@ -848,7 +902,7 @@ class TableColumn(Model, AuditMixinNullable):
     table_id = Column(Integer, ForeignKey('tables.id'))
     table = relationship(
         'SqlaTable', backref='columns', foreign_keys=[table_id])
-    column_name = Column(String(256))
+    column_name = Column(String(255))
     verbose_name = Column(String(1024))
     is_dttm = Column(Boolean, default=False)
     is_active = Column(Boolean, default=True)
@@ -887,13 +941,13 @@ class DruidCluster(Model, AuditMixinNullable):
     __tablename__ = 'clusters'
     id = Column(Integer, primary_key=True)
     cluster_name = Column(String(250), unique=True)
-    coordinator_host = Column(String(256))
+    coordinator_host = Column(String(255))
     coordinator_port = Column(Integer)
     coordinator_endpoint = Column(
-        String(256), default='druid/coordinator/v1/metadata')
-    broker_host = Column(String(256))
+        String(255), default='druid/coordinator/v1/metadata')
+    broker_host = Column(String(255))
     broker_port = Column(Integer)
-    broker_endpoint = Column(String(256), default='druid/v2')
+    broker_endpoint = Column(String(255), default='druid/v2')
     metadata_last_refreshed = Column(DateTime)
 
     def __repr__(self):
@@ -913,7 +967,14 @@ class DruidCluster(Model, AuditMixinNullable):
 
         return json.loads(requests.get(endpoint).text)
 
+    def get_druid_version(self):
+        endpoint = (
+            "http://{obj.coordinator_host}:{obj.coordinator_port}/status"
+        ).format(obj=self)
+        return json.loads(requests.get(endpoint).text)['version']
+
     def refresh_datasources(self):
+        self.druid_version = self.get_druid_version()
         for datasource in self.get_datasources():
             if datasource not in config.get('DRUID_DATA_SOURCE_BLACKLIST'):
                 DruidDatasource.sync_to_db(datasource, self)
@@ -929,7 +990,7 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
 
     __tablename__ = 'datasources'
     id = Column(Integer, primary_key=True)
-    datasource_name = Column(String(256), unique=True)
+    datasource_name = Column(String(255), unique=True)
     is_featured = Column(Boolean, default=False)
     is_hidden = Column(Boolean, default=False)
     description = Column(Text)
@@ -986,6 +1047,13 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
             if m.metric_name == metric_name
         ][0]
 
+    def version_higher(self, v1, v2):
+        v1nums = [int(n) for n in v1.split('.')]
+        v2nums = [int(n) for n in v2.split('.')]
+        return v1nums[0] > v2nums[0] or \
+            (v1nums[0] == v2nums[0] and v1nums[1] > v2nums[1]) or \
+            (v1nums[0] == v2nums[0] and v1nums[1] == v2nums[1] and v1nums[2] > v2nums[2])
+
     def latest_metadata(self):
         """Returns segment metadata from the latest segment"""
         client = self.cluster.get_pydruid_client()
@@ -998,8 +1066,9 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
         # we need to set this interval to more than 1 day ago to exclude
         # realtime segments, which trigged a bug (fixed in druid 0.8.2).
         # https://groups.google.com/forum/#!topic/druid-user/gVCqqspHqOQ
+        start = (0 if self.version_higher(self.cluster.druid_version, '0.8.2') else 1)
         intervals = (max_time - timedelta(days=7)).isoformat() + '/'
-        intervals += (max_time - timedelta(days=1)).isoformat()
+        intervals += (max_time - timedelta(days=start)).isoformat()
         segment_metadata = client.segment_metadata(
             datasource=self.datasource_name,
             intervals=intervals)
@@ -1013,7 +1082,7 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
     @classmethod
     def sync_to_db(cls, name, cluster):
         """Fetches metadata for that datasource and merges the Caravel db"""
-        print("Syncing Druid datasource [{}]".format(name))
+        logging.info("Syncing Druid datasource [{}]".format(name))
         session = get_session()
         datasource = session.query(cls).filter_by(datasource_name=name).first()
         if not datasource:
@@ -1022,7 +1091,9 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
             flasher("Adding new datasource [{}]".format(name), "success")
         else:
             flasher("Refreshing datasource [{}]".format(name), "info")
+        session.flush()
         datasource.cluster = cluster
+        session.flush()
 
         cols = datasource.latest_metadata()
         if not cols:
@@ -1041,10 +1112,14 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
             if datatype == "STRING":
                 col_obj.groupby = True
                 col_obj.filterable = True
+            if datatype == "hyperUnique" or datatype == "thetaSketch":
+                col_obj.count_distinct = True
             if col_obj:
                 col_obj.type = cols[col]['type']
+            session.flush()
             col_obj.datasource = datasource
             col_obj.generate_metrics()
+            session.flush()
 
     def query(  # druid
             self, groupby, metrics,
@@ -1081,7 +1156,7 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
             field_names = []
             for _f in _fields:
                 _type = _f.get('type')
-                if _type == 'fieldAccess':
+                if _type in ['fieldAccess', 'hyperUniqueCardinality']:
                     field_names.append(_f.get('fieldName'))
                 elif _type == 'arithmetic':
                     field_names += recursive_get_fields(_f)
@@ -1106,11 +1181,25 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
                         conf.get('fn', "/"),
                         conf.get('fields', []),
                         conf.get('name', ''))
+
         aggregations = {
             m.metric_name: m.json_obj
             for m in self.metrics
             if m.metric_name in all_metrics
-        }
+            }
+
+        rejected_metrics = [
+            m.metric_name for m in self.metrics
+            if m.is_restricted and
+            m.metric_name in aggregations.keys() and
+            not sm.has_access('metric_access', m.perm)
+            ]
+
+        if rejected_metrics:
+            raise MetricPermException(
+                "Access to the metrics denied: " + ', '.join(rejected_metrics)
+            )
+
         granularity = granularity or "all"
         if granularity != "all":
             granularity = utils.parse_human_timedelta(
@@ -1130,35 +1219,14 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
             post_aggregations=post_aggs,
             intervals=from_dttm.isoformat() + '/' + to_dttm.isoformat(),
         )
-        filters = None
-        for col, op, eq in filter:
-            cond = None
-            if op == '==':
-                cond = Dimension(col) == eq
-            elif op == '!=':
-                cond = ~(Dimension(col) == eq)
-            elif op in ('in', 'not in'):
-                fields = []
-                splitted = eq.split(',')
-                if len(splitted) > 1:
-                    for s in eq.split(','):
-                        s = s.strip()
-                        fields.append(Filter.build_filter(Dimension(col) == s))
-                    cond = Filter(type="or", fields=fields)
-                else:
-                    cond = Dimension(col) == eq
-                if op == 'not in':
-                    cond = ~cond
-            if filters:
-                filters = Filter(type="and", fields=[
-                    Filter.build_filter(cond),
-                    Filter.build_filter(filters)
-                ])
-            else:
-                filters = cond
 
+        filters = self.get_filters(filter)
         if filters:
             qry['filter'] = filters
+
+        having_filters = self.get_having_filters(extras.get('having'))
+        if having_filters:
+            qry['having'] = having_filters
 
         client = self.cluster.get_pydruid_client()
         orig_filters = filters
@@ -1179,7 +1247,8 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
             }
             client.groupby(**pre_qry)
             query_str += "// Two phase query\n// Phase 1\n"
-            query_str += json.dumps(client.query_dict, indent=2) + "\n"
+            query_str += json.dumps(
+                client.query_builder.last_query.query_dict, indent=2) + "\n"
             query_str += "//\nPhase 2 (built based on phase one's results)\n"
             df = client.export_pandas()
             if df is not None and not df.empty:
@@ -1188,11 +1257,11 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
                 for unused, row in df.iterrows():
                     fields = []
                     for dim in dims:
-                        f = Filter.build_filter(Dimension(dim) == row[dim])
+                        f = Dimension(dim) == row[dim]
                         fields.append(f)
                     if len(fields) > 1:
                         filt = Filter(type="and", fields=fields)
-                        filters.append(Filter.build_filter(filt))
+                        filters.append(filt)
                     elif fields:
                         filters.append(fields[0])
 
@@ -1202,8 +1271,8 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
                         qry['filter'] = ff
                     else:
                         qry['filter'] = Filter(type="and", fields=[
-                            Filter.build_filter(ff),
-                            Filter.build_filter(orig_filters)])
+                            ff,
+                            orig_filters])
                 qry['limit_spec'] = None
         if row_limit:
             qry['limit_spec'] = {
@@ -1215,7 +1284,8 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
                 }],
             }
         client.groupby(**qry)
-        query_str += json.dumps(client.query_dict, indent=2)
+        query_str += json.dumps(
+            client.query_builder.last_query.query_dict, indent=2)
         df = client.export_pandas()
         if df is None or df.size == 0:
             raise Exception(_("No data was returned."))
@@ -1238,6 +1308,62 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
             query=query_str,
             duration=datetime.now() - qry_start_dttm)
 
+    @staticmethod
+    def get_filters(raw_filters):
+        filters = None
+        for col, op, eq in raw_filters:
+            cond = None
+            if op == '==':
+                cond = Dimension(col) == eq
+            elif op == '!=':
+                cond = ~(Dimension(col) == eq)
+            elif op in ('in', 'not in'):
+                fields = []
+                splitted = eq.split(',')
+                if len(splitted) > 1:
+                    for s in eq.split(','):
+                        s = s.strip()
+                        fields.append(Dimension(col) == s)
+                    cond = Filter(type="or", fields=fields)
+                else:
+                    cond = Dimension(col) == eq
+                if op == 'not in':
+                    cond = ~cond
+            elif op == 'regex':
+                cond = Filter(type="regex", pattern=eq, dimension=col)
+            if filters:
+                filters = Filter(type="and", fields=[
+                    cond,
+                    filters
+                ])
+            else:
+                filters = cond
+        return filters
+
+    def get_having_filters(self, raw_filters):
+        filters = None
+        for col, op, eq in raw_filters:
+            cond = None
+            if op == '==':
+                if col in self.column_names:
+                    cond = DimSelector(dimension=col, value=eq)
+                else:
+                    cond = Aggregation(col) == eq
+            elif op == '!=':
+                cond = ~(Aggregation(col) == eq)
+            elif op == '>':
+                cond = Aggregation(col) > eq
+            elif op == '<':
+                cond = Aggregation(col) < eq
+            if filters:
+                filters = Filter(type="and", fields=[
+                    Having.build_having(cond),
+                    Having.build_having(filters)
+                ])
+            else:
+                filters = cond
+        return filters
+
 
 class Log(Model):
 
@@ -1250,7 +1376,6 @@ class Log(Model):
     user_id = Column(Integer, ForeignKey('ab_user.id'))
     dashboard_id = Column(Integer)
     slice_id = Column(Integer)
-    user_id = Column(Integer, ForeignKey('ab_user.id'))
     json = Column(Text)
     user = relationship('User', backref='logs', foreign_keys=[user_id])
     dttm = Column(DateTime, default=func.now())
@@ -1297,6 +1422,7 @@ class DruidMetric(Model, AuditMixinNullable):
                               enable_typechecks=False)
     json = Column(Text)
     description = Column(Text)
+    is_restricted = Column(Boolean, default=False, nullable=True)
 
     @property
     def json_obj(self):
@@ -1305,6 +1431,14 @@ class DruidMetric(Model, AuditMixinNullable):
         except Exception:
             obj = {}
         return obj
+
+    @property
+    def perm(self):
+        return (
+            "{parent_name}.[{obj.metric_name}](id:{obj.id})"
+        ).format(obj=self,
+                 parent_name=self.datasource.full_name
+                 ) if self.datasource else None
 
 
 class DruidColumn(Model, AuditMixinNullable):
@@ -1319,7 +1453,7 @@ class DruidColumn(Model, AuditMixinNullable):
     # Setting enable_typechecks=False disables polymorphic inheritance.
     datasource = relationship('DruidDatasource', backref='columns',
                               enable_typechecks=False)
-    column_name = Column(String(256))
+    column_name = Column(String(255))
     is_active = Column(Boolean, default=True)
     type = Column(String(32))
     groupby = Column(Boolean, default=False)
@@ -1384,18 +1518,31 @@ class DruidColumn(Model, AuditMixinNullable):
                     'type': mt, 'name': name, 'fieldName': self.column_name})
             ))
         if self.count_distinct:
-            mt = 'count_distinct'
             name = 'count_distinct__' + self.column_name
-            metrics.append(DruidMetric(
-                metric_name=name,
-                verbose_name='COUNT(DISTINCT {})'.format(self.column_name),
-                metric_type='count_distinct',
-                json=json.dumps({
-                    'type': 'cardinality',
-                    'name': name,
-                    'fieldNames': [self.column_name]})
-            ))
+            if self.type == 'hyperUnique' or self.type == 'thetaSketch':
+                metrics.append(DruidMetric(
+                    metric_name=name,
+                    verbose_name='COUNT(DISTINCT {})'.format(self.column_name),
+                    metric_type=self.type,
+                    json=json.dumps({
+                        'type': self.type,
+                        'name': name,
+                        'fieldName': self.column_name
+                    })
+                ))
+            else:
+                mt = 'count_distinct'
+                metrics.append(DruidMetric(
+                    metric_name=name,
+                    verbose_name='COUNT(DISTINCT {})'.format(self.column_name),
+                    metric_type='count_distinct',
+                    json=json.dumps({
+                        'type': 'cardinality',
+                        'name': name,
+                        'fieldNames': [self.column_name]})
+                ))
         session = get_session()
+        new_metrics = []
         for metric in metrics:
             m = (
                 session.query(M)
@@ -1406,8 +1553,11 @@ class DruidColumn(Model, AuditMixinNullable):
             )
             metric.datasource_name = self.datasource_name
             if not m:
+                new_metrics.append(metric)
                 session.add(metric)
-                session.commit()
+                session.flush()
+
+        utils.init_metrics_perm(caravel, new_metrics)
 
 
 class FavStar(Model):

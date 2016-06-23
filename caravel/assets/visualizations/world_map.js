@@ -14,10 +14,11 @@ function worldMapChart(slice) {
     container.css('height', slice.height());
 
     d3.json(slice.jsonEndpoint(), function (error, json) {
+      div.selectAll("*").remove();
       var fd = json.form_data;
 
       if (error !== null) {
-        slice.error(error.responseText);
+        slice.error(error.responseText, error);
         return '';
       }
       var ext = d3.extent(json.data, function (d) {
