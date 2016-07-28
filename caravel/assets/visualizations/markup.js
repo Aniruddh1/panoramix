@@ -1,10 +1,10 @@
 var $ = window.$ || require('jquery');
 
-function markupWidget(slice) {
+require('./markup.css');
 
+function markupWidget(slice) {
   function refresh() {
     $('#code').attr('rows', '15');
-
     $.getJSON(slice.jsonEndpoint(), function (payload) {
         slice.container.html(payload.data.html);
         slice.done(payload);
@@ -13,10 +13,9 @@ function markupWidget(slice) {
         slice.error(xhr.responseText, xhr);
       });
   }
-
   return {
     render: refresh,
-    resize: refresh
+    resize: refresh,
   };
 }
 

@@ -20,10 +20,10 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 from flask import request
-from flask_babelpkg import lazy_gettext as _
+from flask_babel import lazy_gettext as _
 from markdown import markdown
 import simplejson as json
-from six import string_types
+from six import string_types, PY3
 from werkzeug.datastructures import ImmutableMultiDict, MultiDict
 from werkzeug.urls import Href
 from dateutil import relativedelta as rdelta
@@ -146,15 +146,34 @@ class BaseViz(object):
         self.error_msg = ""
         self.results = None
 
+        timestamp_format = None
+        if self.datasource.type == 'table':
+            dttm_col = self.datasource.get_col(query_obj['granularity'])
+            if dttm_col:
+                timestamp_format = dttm_col.python_date_format
+
         # The datasource here can be different backend but the interface is common
         self.results = self.datasource.query(**query_obj)
         self.query = self.results.query
         df = self.results.df
+        # Transform the timestamp we received from database to pandas supported
+        # datetime format. If no python_date_format is specified, the pattern will
+        # be considered as the default ISO date format
+        # If the datetime format is unix, the parse will use the corresponding
+        # parsing logic.
         if df is None or df.empty:
             raise Exception("No data, review your incantations!")
         else:
             if 'timestamp' in df.columns:
-                df.timestamp = pd.to_datetime(df.timestamp, utc=False)
+                if timestamp_format == "epoch_s":
+                    df.timestamp = pd.to_datetime(
+                        df.timestamp, utc=False, unit="s")
+                elif timestamp_format == "epoch_ms":
+                    df.timestamp = pd.to_datetime(
+                        df.timestamp, utc=False, unit="ms")
+                else:
+                    df.timestamp = pd.to_datetime(
+                        df.timestamp, utc=False, format=timestamp_format)
                 if self.datasource.offset:
                     df.timestamp += timedelta(hours=self.datasource.offset)
         df.replace([np.inf, -np.inf], np.nan)
@@ -179,7 +198,7 @@ class BaseViz(object):
             col = form_data.get(field_prefix + "_col_" + str(i))
             op = form_data.get(field_prefix + "_op_" + str(i))
             eq = form_data.get(field_prefix + "_eq_" + str(i))
-            if col and op and eq:
+            if col and op and eq is not None:
                 filters.append((col, op, eq))
 
         # Extra filters (coming from dashboard)
@@ -217,7 +236,8 @@ class BaseViz(object):
         # for instance the extra where clause that applies only to Tables
         extras = {
             'where': form_data.get("where", ''),
-            'having': self.query_filters(True) or form_data.get("having", ''),
+            'having': form_data.get("having", ''),
+            'having_druid': self.query_filters(True),
             'time_grain_sqla': form_data.get("time_grain_sqla", ''),
             'druid_time_origin': form_data.get("druid_time_origin", ''),
         }
@@ -259,7 +279,10 @@ class BaseViz(object):
         if payload:
             is_cached = True
             try:
-                payload = json.loads(zlib.decompress(payload))
+                cached_data = zlib.decompress(payload)
+                if PY3:
+                    cached_data = cached_data.decode('utf-8')
+                payload = json.loads(cached_data)
             except Exception as e:
                 logging.error("Error reading cache")
                 payload = None
@@ -282,14 +305,18 @@ class BaseViz(object):
             logging.info("Caching for the next {} seconds".format(
                 cache_timeout))
             try:
+                data = self.json_dumps(payload)
+                if PY3:
+                    data = bytes(data, 'utf-8')
                 cache.set(
                     cache_key,
-                    zlib.compress(self.json_dumps(payload)),
+                    zlib.compress(data),
                     timeout=cache_timeout)
             except Exception as e:
                 # cache.set call can fail if the backend is down or if
                 # the key is too large or whatever other reasons
                 logging.warning("Could not cache key {}".format(cache_key))
+                logging.exception(e)
                 cache.delete(cache_key)
         payload['is_cached'] = is_cached
         return self.json_dumps(payload)
@@ -300,6 +327,7 @@ class BaseViz(object):
 
     @property
     def data(self):
+        """This is the data object serialized to the js layer"""
         content = {
             'csv_endpoint': self.csv_endpoint,
             'form_data': self.form_data,
@@ -307,6 +335,11 @@ class BaseViz(object):
             'standalone_endpoint': self.standalone_endpoint,
             'token': self.token,
             'viz_name': self.viz_type,
+            'column_formats': {
+                m.metric_name: m.d3format
+                for m in self.datasource.metrics
+                if m.d3format
+            },
         }
         return content
 
@@ -350,16 +383,11 @@ class TableViz(BaseViz):
     fieldsets = ({
         'label': _("GROUP BY"),
         'description': _('Use this section if you want a query that aggregates'),
-        'fields': (
-            'groupby',
-            'metrics',
-        )
+        'fields': ('groupby', 'metrics')
     }, {
         'label': _("NOT GROUPED BY"),
         'description': _('Use this section if you want to query atomic rows'),
-        'fields': (
-            'all_columns',
-        )
+        'fields': ('all_columns', 'order_by_cols'),
     }, {
         'label': _("Options"),
         'fields': (
@@ -385,6 +413,7 @@ class TableViz(BaseViz):
         if fd.get('all_columns'):
             d['columns'] = fd.get('all_columns')
             d['groupby'] = []
+            d['orderby'] = [json.loads(t) for t in fd.get('order_by_cols', [])]
         return d
 
     def get_df(self, query_obj=None):
@@ -490,6 +519,25 @@ class MarkupViz(BaseViz):
 
     def get_data(self):
         return dict(html=self.rendered())
+
+
+class SeparatorViz(MarkupViz):
+
+    """Use to create section headers in a dashboard, similar to `Markup`"""
+
+    viz_type = "separator"
+    verbose_name = _("Separator")
+    form_overrides = {
+        'code': {
+            'default': (
+                "####Section Title\n"
+                "A paragraph describing the section"
+                "of the dashboard, right before the separator line "
+                "\n\n"
+                "---------------"
+            ),
+        }
+    }
 
 
 class WordCloudViz(BaseViz):
@@ -650,7 +698,7 @@ class BoxPlotViz(NVD3Viz):
     viz_type = "box_plot"
     verbose_name = _("Box Plot")
     sort_series = False
-    is_timeseries = True
+    is_timeseries = False
     fieldsets = ({
         'label': None,
         'fields': (
@@ -1077,14 +1125,14 @@ class NVD3TimeSeriesBarViz(NVD3TimeSeriesViz):
     fieldsets = [NVD3TimeSeriesViz.fieldsets[0]] + [{
         'label': _('Chart Options'),
         'fields': (
-            ('show_brush', 'show_legend'),
+            ('show_brush', 'show_legend', 'show_bar_value'),
             ('rich_tooltip', 'y_axis_zero'),
             ('y_log_scale', 'contribution'),
             ('x_axis_format', 'y_axis_format'),
             ('line_interpolation', 'bar_stacked'),
             ('x_axis_showminmax', 'bottom_margin'),
             ('x_axis_label', 'y_axis_label'),
-            ('reduce_x_ticks', None),
+            ('reduce_x_ticks', 'show_controls'),
         ), }] + [NVD3TimeSeriesViz.fieldsets[2]]
 
 
@@ -1110,7 +1158,7 @@ class NVD3TimeSeriesStackedViz(NVD3TimeSeriesViz):
             ('rich_tooltip', 'y_axis_zero'),
             ('y_log_scale', 'contribution'),
             ('x_axis_format', 'y_axis_format'),
-            ('x_axis_showminmax'),
+            ('x_axis_showminmax', 'show_controls'),
             ('line_interpolation', 'stacked_style'),
         ), }] + [NVD3TimeSeriesViz.fieldsets[2]]
 
@@ -1165,10 +1213,11 @@ class DistributionBarViz(DistributionPieViz):
             'columns',
             'metrics',
             'row_limit',
-            ('show_legend', 'bar_stacked'),
+            ('show_legend', 'show_bar_value', 'bar_stacked'),
             ('y_axis_format', 'bottom_margin'),
             ('x_axis_label', 'y_axis_label'),
             ('reduce_x_ticks', 'contribution'),
+            ('show_controls', None),
         )
     },)
     form_overrides = {
@@ -1287,9 +1336,8 @@ class SunburstViz(BaseViz):
         metric = self.form_data.get('metric')
         secondary_metric = self.form_data.get('secondary_metric')
         if metric == secondary_metric:
-            ndf = df[cols]
-            ndf['m1'] = df[metric]
-            ndf['m2'] = df[metric]
+            ndf = df
+            ndf.columns = [cols + ['m1', 'm2']]
         else:
             cols += [
                 self.form_data['metric'], self.form_data['secondary_metric']]
@@ -1462,8 +1510,10 @@ class WorldMapViz(BaseViz):
         secondary_metric = self.form_data.get('secondary_metric')
         if metric == secondary_metric:
             ndf = df[cols]
-            ndf['m1'] = df[metric]
-            ndf['m2'] = df[metric]
+            # df[metric] will be a DataFrame
+            # because there are duplicate column names
+            ndf['m1'] = df[metric].iloc[:, 0]
+            ndf['m2'] = ndf['m1']
         else:
             cols += [metric, secondary_metric]
             ndf = df[cols]
@@ -1471,8 +1521,11 @@ class WorldMapViz(BaseViz):
         df.columns = ['country', 'm1', 'm2']
         d = df.to_dict(orient='records')
         for row in d:
-            country = countries.get(
-                self.form_data.get('country_fieldtype'), row['country'])
+            country = None
+            if isinstance(row['country'], string_types):
+                country = countries.get(
+                    self.form_data.get('country_fieldtype'), row['country'])
+
             if country:
                 row['country'] = country['cca3']
                 row['latitude'] = country['lat']
@@ -1669,6 +1722,176 @@ class HorizonViz(NVD3TimeSeriesViz):
         ), }]
 
 
+class MapboxViz(BaseViz):
+
+    """Rich maps made with Mapbox"""
+
+    viz_type = "mapbox"
+    verbose_name = _("Mapbox")
+    is_timeseries = False
+    credits = (
+        '<a href=https://www.mapbox.com/mapbox-gl-js/api/>Mapbox GL JS</a>')
+    fieldsets = ({
+        'label': None,
+        'fields': (
+            ('all_columns_x', 'all_columns_y'),
+            'clustering_radius',
+            'row_limit',
+            'groupby',
+            'render_while_dragging',
+        )
+    }, {
+        'label': _('Points'),
+        'fields': (
+            'point_radius',
+            'point_radius_unit',
+        )
+    }, {
+        'label': _('Labelling'),
+        'fields': (
+            'mapbox_label',
+            'pandas_aggfunc',
+        )
+    }, {
+        'label': _('Visual Tweaks'),
+        'fields': (
+            'mapbox_style',
+            'global_opacity',
+            'mapbox_color',
+        )
+    }, {
+        'label': _('Viewport'),
+        'fields': (
+            'viewport_longitude',
+            'viewport_latitude',
+            'viewport_zoom',
+        )
+    },)
+
+    form_overrides = {
+        'all_columns_x': {
+            'label': _('Longitude'),
+            'description': _("Column containing longitude data"),
+        },
+        'all_columns_y': {
+            'label': _('Latitude'),
+            'description': _("Column containing latitude data"),
+        },
+        'pandas_aggfunc': {
+            'label': _('Cluster label aggregator'),
+            'description': _(
+                "Aggregate function applied to the list of points "
+                "in each cluster to produce the cluster label."),
+        },
+        'rich_tooltip': {
+            'label': _('Tooltip'),
+            'description': _(
+                "Show a tooltip when hovering over points and clusters "
+                "describing the label"),
+        },
+        'groupby': {
+            'description': _(
+                "One or many fields to group by. If grouping, latitude "
+                "and longitude columns must be present."),
+        },
+    }
+
+    def query_obj(self):
+        d = super(MapboxViz, self).query_obj()
+        fd = self.form_data
+        label_col = fd.get('mapbox_label')
+
+        if not fd.get('groupby'):
+            d['columns'] = [fd.get('all_columns_x'), fd.get('all_columns_y')]
+
+            if label_col and len(label_col) >= 1:
+                if label_col[0] == "count":
+                    raise Exception(
+                        "Must have a [Group By] column to have 'count' as the [Label]")
+                d['columns'].append(label_col[0])
+
+            if fd.get('point_radius') != 'Auto':
+                d['columns'].append(fd.get('point_radius'))
+
+            d['columns'] = list(set(d['columns']))
+        else:
+            # Ensuring columns chosen are all in group by
+            if (label_col and len(label_col) >= 1 and
+                    label_col[0] != "count" and
+                    label_col[0] not in fd.get('groupby')):
+                raise Exception(
+                    "Choice of [Label] must be present in [Group By]")
+
+            if (fd.get("point_radius") != "Auto" and
+                    fd.get("point_radius") not in fd.get('groupby')):
+                raise Exception(
+                    "Choice of [Point Radius] must be present in [Group By]")
+
+            if (fd.get('all_columns_x') not in fd.get('groupby') or
+                    fd.get('all_columns_y') not in fd.get('groupby')):
+                raise Exception(
+                    "[Longitude] and [Latitude] columns must be present in [Group By]")
+        return d
+
+    def get_data(self):
+        df = self.get_df()
+        fd = self.form_data
+        label_col = fd.get('mapbox_label')
+        custom_metric = label_col and len(label_col) >= 1
+        metric_col = [None] * len(df.index)
+        if custom_metric:
+            if label_col[0] == fd.get('all_columns_x'):
+                metric_col = df[fd.get('all_columns_x')]
+            elif label_col[0] == fd.get('all_columns_y'):
+                metric_col = df[fd.get('all_columns_y')]
+            else:
+                metric_col = df[label_col[0]]
+        point_radius_col = (
+            [None] * len(df.index)
+            if fd.get("point_radius") == "Auto"
+            else df[fd.get("point_radius")])
+
+        # using geoJSON formatting
+        geo_json = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "metric": metric,
+                        "radius": point_radius,
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [lon, lat],
+                    }
+                }
+                for lon, lat, metric, point_radius
+                in zip(
+                    df[fd.get('all_columns_x')],
+                    df[fd.get('all_columns_y')],
+                    metric_col, point_radius_col)
+            ]
+        }
+
+        return {
+            "geoJSON": geo_json,
+            "customMetric": custom_metric,
+            "mapboxApiKey": config.get('MAPBOX_API_KEY'),
+            "mapStyle": fd.get("mapbox_style"),
+            "aggregatorName": fd.get("pandas_aggfunc"),
+            "clusteringRadius": fd.get("clustering_radius"),
+            "pointRadiusUnit": fd.get("point_radius_unit"),
+            "globalOpacity": fd.get("global_opacity"),
+            "viewportLongitude": fd.get("viewport_longitude"),
+            "viewportLatitude": fd.get("viewport_latitude"),
+            "viewportZoom": fd.get("viewport_zoom"),
+            "renderWhileDragging": fd.get("render_while_dragging"),
+            "tooltip": fd.get("rich_tooltip"),
+            "color": fd.get("mapbox_color"),
+        }
+
+
 viz_types_list = [
     TableViz,
     PivotTableViz,
@@ -1695,6 +1918,8 @@ viz_types_list = [
     TreemapViz,
     CalHeatmapViz,
     HorizonViz,
+    MapboxViz,
+    SeparatorViz,
 ]
 
 viz_types = OrderedDict([(v.viz_type, v) for v in viz_types_list

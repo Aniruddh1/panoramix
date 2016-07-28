@@ -71,7 +71,7 @@ function sunburstVis(slice) {
         width: visWidth / maxBreadcrumbs,
         height: breadcrumbHeight *0.8, // more margin
         spacing: 3,
-        tipTailWidth: 10
+        tipTailWidth: 10,
       };
 
       breadcrumbs = svg.append("svg:g")
@@ -308,6 +308,11 @@ function sunburstVis(slice) {
           .attr("x", (breadcrumbDims.width + breadcrumbDims.tipTailWidth) / 2)
           .attr("y", breadcrumbDims.height / 4)
           .attr("dy", "0.35em")
+          .style("fill", function (d) {
+            // Make text white or black based on the lightness of the background
+            var col = d3.hsl(colorByCategory ? px.color.category21(d.name) : colorScale(d.m2 / d.m1));
+            return col.l < 0.5 ? 'white' : 'black';
+          })
           .attr("class", "step-label")
           .text(function (d) { return d.name.replace(/_/g, " "); })
           .call(wrapSvgText, breadcrumbDims.width, breadcrumbDims.height / 2);
@@ -334,7 +339,7 @@ function sunburstVis(slice) {
     function buildHierarchy(rows) {
       var root = {
         name: "root",
-        children: []
+        children: [],
       };
 
       for (var i = 0; i < rows.length; i++) { // each record [groupby1val, groupby2val, (<string> or 0)n, m1, m2]
@@ -371,7 +376,7 @@ function sunburstVis(slice) {
               childNode = {
                 name: nodeName,
                 children: [],
-                level: level
+                level: level,
               };
               children.push(childNode);
             }
@@ -382,7 +387,7 @@ function sunburstVis(slice) {
             childNode = {
               name: nodeName,
               m1: m1,
-              m2: m2
+              m2: m2,
             };
             children.push(childNode);
           }
@@ -412,7 +417,7 @@ function sunburstVis(slice) {
 
   return {
     render: render,
-    resize: render
+    resize: render,
   };
 }
 

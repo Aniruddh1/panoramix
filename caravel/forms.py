@@ -6,9 +6,10 @@ from __future__ import unicode_literals
 
 from collections import OrderedDict
 from copy import copy
+import json
 import math
 
-from flask_babelpkg import lazy_gettext as _
+from flask_babel import lazy_gettext as _
 from wtforms import (
     Form, SelectMultipleField, SelectField, TextField, TextAreaField,
     BooleanField, IntegerField, HiddenField, DecimalField)
@@ -129,6 +130,10 @@ class FormFactory(object):
         gb_cols = datasource.groupby_column_names
         default_groupby = gb_cols[0] if gb_cols else None
         group_by_choices = self.choicify(gb_cols)
+        order_by_choices = []
+        for s in sorted(datasource.num_cols):
+            order_by_choices.append((json.dumps([s, True]), s + ' [asc]'))
+            order_by_choices.append((json.dumps([s, False]), s + ' [desc]'))
         # Pool of all the fields that can be used in Caravel
         field_data = {
             'viz_type': (SelectField, {
@@ -141,6 +146,11 @@ class FormFactory(object):
                 "label": _("Metrics"),
                 "choices": datasource.metrics_combo,
                 "default": [default_metric],
+                "description": _("One or many metrics to display")
+            }),
+            'order_by_cols': (SelectMultipleSortableField, {
+                "label": _("Ordering"),
+                "choices": order_by_choices,
                 "description": _("One or many metrics to display")
             }),
             'metric': (SelectField, {
@@ -225,6 +235,19 @@ class FormFactory(object):
                 "default": False,
                 "description": ""
             }),
+            'show_bar_value': (BetterBooleanField, {
+                "label": _("Bar Values"),
+                "default": False,
+                "description": "Show the value on top of the bars or not"
+            }),
+            'show_controls': (BetterBooleanField, {
+                "label": _("Extra Controls"),
+                "default": False,
+                "description": _(
+                    "Whether to show extra controls or not. Extra controls "
+                    "include things like making mulitBar charts stacked "
+                    "or side by side.")
+            }),
             'reduce_x_ticks': (BetterBooleanField, {
                 "label": _("Reduce X ticks"),
                 "default": False,
@@ -277,11 +300,13 @@ class FormFactory(object):
             'all_columns_x': (SelectField, {
                 "label": _("X"),
                 "choices": self.choicify(datasource.column_names),
+                "default": datasource.column_names[0],
                 "description": _("Columns to display")
             }),
             'all_columns_y': (SelectField, {
                 "label": _("Y"),
                 "choices": self.choicify(datasource.column_names),
+                "default": datasource.column_names[0],
                 "description": _("Columns to display")
             }),
             'druid_time_origin': (FreeFormSelectField, {
@@ -389,7 +414,7 @@ class FormFactory(object):
                     "The time column for the visualization. Note that you "
                     "can define arbitrary expression that return a DATETIME "
                     "column in the table editor. Also note that the "
-                    "filter bellow is applied against this column or "
+                    "filter below is applied against this column or "
                     "expression")
             }),
             'resample_rule': (FreeFormSelectField, {
@@ -533,7 +558,7 @@ class FormFactory(object):
                 "default": default_groupby,
                 "description": _(
                     "Defines the grouping of entities. "
-                    "Each serie is shown as a specific color on the chart and "
+                    "Each series is shown as a specific color on the chart and "
                     "has a legend toggle")
             }),
             'entity': (SelectField, {
@@ -792,6 +817,111 @@ class FormFactory(object):
                     "Description text that shows up below your Big "
                     "Number")
             }),
+            'mapbox_label': (SelectMultipleSortableField, {
+                "label": "Label",
+                "choices": self.choicify(["count"] + datasource.column_names),
+                "description": _(
+                    "'count' is COUNT(*) if a group by is used. "
+                    "Numerical columns will be aggregated with the aggregator. "
+                    "Non-numerical columns will be used to label points. "
+                    "Leave empty to get a count of points in each cluster."),
+            }),
+            'mapbox_style': (SelectField, {
+                "label": "Map Style",
+                "choices": [
+                    ("mapbox://styles/mapbox/streets-v9", "Streets"),
+                    ("mapbox://styles/mapbox/dark-v9", "Dark"),
+                    ("mapbox://styles/mapbox/light-v9", "Light"),
+                    ("mapbox://styles/mapbox/satellite-streets-v9", "Satellite Streets"),
+                    ("mapbox://styles/mapbox/satellite-v9", "Satellite"),
+                    ("mapbox://styles/mapbox/outdoors-v9", "Outdoors"),
+                ],
+                "default": "mapbox://styles/mapbox/streets-v9",
+                "description": _("Base layer map style")
+            }),
+            'clustering_radius': (FreeFormSelectField, {
+                "label": _("Clustering Radius"),
+                "default": "60",
+                "choices": self.choicify([
+                    '0',
+                    '20',
+                    '40',
+                    '60',
+                    '80',
+                    '100',
+                    '200',
+                    '500',
+                    '1000',
+                ]),
+                "description": _(
+                    "The radius (in pixels) the algorithm uses to define a cluster. "
+                    "Choose 0 to turn off clustering, but beware that a large "
+                    "number of points (>1000) will cause lag.")
+            }),
+            'point_radius': (SelectField, {
+                "label": _("Point Radius"),
+                "default": "Auto",
+                "choices": self.choicify(["Auto"] + datasource.column_names),
+                "description": _(
+                    "The radius of individual points (ones that are not in a cluster). "
+                    "Either a numerical column or 'Auto', which scales the point based "
+                    "on the largest cluster")
+            }),
+            'point_radius_unit': (SelectField, {
+                "label": _("Point Radius Unit"),
+                "default": "Pixels",
+                "choices": self.choicify([
+                    "Pixels",
+                    "Miles",
+                    "Kilometers",
+                ]),
+                "description": _("The unit of measure for the specified point radius")
+            }),
+            'global_opacity': (DecimalField, {
+                "label": _("Opacity"),
+                "default": 1,
+                "description": _(
+                    "Opacity of all clusters, points, and labels. "
+                    "Between 0 and 1."),
+            }),
+            'viewport_zoom': (DecimalField, {
+                "label": _("Zoom"),
+                "default": 11,
+                "validators": [validators.optional()],
+                "description": _("Zoom level of the map"),
+                "places": 8,
+            }),
+            'viewport_latitude': (DecimalField, {
+                "label": _("Default latitude"),
+                "default": 37.772123,
+                "description": _("Latitude of default viewport"),
+                "places": 8,
+            }),
+            'viewport_longitude': (DecimalField, {
+                "label": _("Default longitude"),
+                "default": -122.405293,
+                "description": _("Longitude of default viewport"),
+                "places": 8,
+            }),
+            'render_while_dragging': (BetterBooleanField, {
+                "label": _("Live render"),
+                "default": True,
+                "description": _("Points and clusters will update as viewport "
+                    "is being changed")
+            }),
+            'mapbox_color': (FreeFormSelectField, {
+                "label": _("RGB Color"),
+                "default": "rgb(0, 122, 135)",
+                "choices": [
+                    ("rgb(0, 139, 139)", "Dark Cyan"),
+                    ("rgb(128, 0, 128)", "Purple"),
+                    ("rgb(255, 215, 0)", "Gold"),
+                    ("rgb(69, 69, 69)", "Dim Gray"),
+                    ("rgb(220, 20, 60)", "Crimson"),
+                    ("rgb(34, 139, 34)", "Forest Green"),
+                ],
+                "description": _("The color for points and clusters in RGB")
+            }),
         }
 
         # Override default arguments with form overrides
@@ -887,12 +1017,14 @@ class FormFactory(object):
             field_css_classes['granularity'] = ['form-control', 'select2_freeform']
             field_css_classes['druid_time_origin'] = ['form-control', 'select2_freeform']
             filter_choices = self.choicify(['in', 'not in', 'regex'])
-            having_op_choices = self.choicify(['>', '<', '=='])
+            having_op_choices = self.choicify(
+                ['==', '!=', '>', '<', '>=', '<='])
             filter_prefixes += ['having']
         add_to_form(('since', 'until'))
 
+        # filter_cols defaults to ''. Filters with blank col will be ignored
         filter_cols = self.choicify(
-            viz.datasource.filterable_column_names or [''])
+            ([''] + viz.datasource.filterable_column_names) or [''])
         having_cols = filter_cols + viz.datasource.metrics_combo
         for field_prefix in filter_prefixes:
             is_having_filter = field_prefix == 'having'

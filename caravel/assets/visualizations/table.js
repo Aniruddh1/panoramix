@@ -2,14 +2,13 @@ var $ = window.$ = require('jquery');
 var jQuery = window.jQuery = $;
 var d3 = require('d3');
 var px = window.px || require('../javascripts/modules/caravel.js');
+var utils = require('../javascripts/modules/utils.js');
 
 require('./table.css');
 require('datatables.net-bs');
 require('../node_modules/datatables-bootstrap3-plugin/media/css/datatables-bootstrap3.css');
-var utils = require('../javascripts/modules/utils');
 
 function tableVis(slice) {
-  var f = d3.format('.3s');
   var fC = d3.format('0,000');
   var timestampFormatter;
 
@@ -24,6 +23,15 @@ function tableVis(slice) {
       var data = json.data;
       var form_data = json.form_data;
       var metrics = json.form_data.metrics;
+
+      // Removing metrics (aggregates) that are strings
+      var real_metrics = [];
+      for (var k in data.records[0]) {
+        if (metrics.indexOf(k) > -1 && !isNaN(data.records[0][k])) {
+          real_metrics.push(k);
+        }
+      }
+      metrics = real_metrics;
 
       function col(c) {
         var arr = [];
@@ -71,7 +79,7 @@ function tableVis(slice) {
             return {
               col: c,
               val: val,
-              isMetric: metrics.indexOf(c) >= 0
+              isMetric: metrics.indexOf(c) >= 0,
             };
           });
         }).enter()
@@ -111,7 +119,7 @@ function tableVis(slice) {
         })
         .html(function (d) {
           if (d.isMetric) {
-            return f(d.val);
+            return slice.d3format(d.col, d.val);
           } else {
             return d.val;
           }
@@ -119,11 +127,12 @@ function tableVis(slice) {
       var height = slice.container.height();
       var datatable = slice.container.find('.dataTable').DataTable({
         paging: false,
+        aaSorting: [],
         searching: form_data.include_search,
         bInfo: false,
         scrollY: height + "px",
         scrollCollapse: true,
-        scrollX: true
+        scrollX: true,
       });
       utils.fixDataTableBodyHeight(
           slice.container.find('.dataTables_wrapper'), height);
@@ -139,7 +148,7 @@ function tableVis(slice) {
 
   return {
     render: refresh,
-    resize: function () {}
+    resize: function () {},
   };
 }
 
