@@ -652,6 +652,10 @@ class CalHeatmapViz(BaseViz):
 
         start = utils.parse_human_datetime(form_data.get("since"))
         end = utils.parse_human_datetime(form_data.get("until"))
+        # Use data returned for limits instead selected range
+        if len(df.index) != 0:
+            start = df.loc[:,'timestamp'].min()
+            end = df.loc[:,'timestamp'].max()
         domain = form_data.get("domain_granularity")
         diff_delta = rdelta.relativedelta(end, start)
         diff_secs = (end - start).total_seconds()
