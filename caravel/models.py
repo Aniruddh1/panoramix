@@ -362,7 +362,6 @@ class Queryable(object):
             return "/caravel/explore/{obj.type}/{obj.id}/".format(obj=self)
 
 
-
 class Database(Model, AuditMixinNullable):
 
     """An ORM object that stores Database related information"""
@@ -505,6 +504,11 @@ class Database(Model, AuditMixinNullable):
     def sql_link(self):
         return '<a href="{}">SQL</a>'.format(self.sql_url)
 
+    @property
+    def perm(self):
+        return (
+            "[{obj.database_name}].(id:{obj.id})").format(obj=self)
+
 
 class SqlaTable(Model, Queryable, AuditMixinNullable):
 
@@ -535,7 +539,6 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
         sqla.UniqueConstraint(
             'database_id', 'schema', 'table_name',
             name='_customer_location_uc'),)
-
 
     def __repr__(self):
         return self.table_name
@@ -687,8 +690,8 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
                 select_exprs += [timestamp_grain]
                 groupby_exprs += [timestamp_grain]
 
-            outer_from = text(dttm_col.dttm_sql_literal(from_dttm))
-            outer_to = text(dttm_col.dttm_sql_literal(to_dttm))
+            outer_from = text(dttm_col.dttm_sql_literal(from_dttm, dttm_col.type))
+            outer_to = text(dttm_col.dttm_sql_literal(to_dttm, dttm_col.type))
 
             time_filter = [
                 timestamp >= outer_from,
@@ -743,7 +746,7 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
         qry = qry.limit(row_limit)
 
         if timeseries_limit and groupby:
-            # some sql dialects require for order by expressions 
+            # some sql dialects require for order by expressions
             # to also be in the select clause
             inner_select_exprs += [main_metric_expr]
             subq = select(inner_select_exprs)
@@ -765,7 +768,7 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
         sql = "{}".format(
             qry.compile(
                 engine, compile_kwargs={"literal_binds": True},),
-            )
+        )
         df = pd.read_sql_query(
             sql=sql,
             con=engine
@@ -956,7 +959,7 @@ class TableColumn(Model, AuditMixinNullable):
             col = literal_column(self.expression).label(name)
         return col
 
-    def dttm_sql_literal(self, dttm):
+    def dttm_sql_literal(self, dttm, field_type):
         """Convert datetime object to string
 
         If database_expression is empty, the internal dttm
@@ -967,27 +970,21 @@ class TableColumn(Model, AuditMixinNullable):
         """
         tf = self.python_date_format or '%Y-%m-%d %H:%M:%S.%f'
         if self.database_expression:
-            return self.database_expression.format(dttm.strftime('%Y-%m-%d %H:%M:%S'))
+            return self.database_expression.format(dttm.strftime('%Y-%m-%d %H:%M:%S'))# Why are ms missing here?
         elif tf == 'epoch_s':
             return str((dttm - datetime(1970, 1, 1)).total_seconds())
         elif tf == 'epoch_ms':
-            return str((dttm - datetime(1970, 1, 1)).total_seconds()*1000.0)
+            return str((dttm - datetime(1970, 1, 1)).total_seconds() * 1000.0)
         else:
-            default = "'{}'".format(dttm.strftime(tf))
-            iso = dttm.isoformat()
-            d = {
-                'mssql': "CONVERT(DATETIME, '{}', 126)".format(iso),  # untested
-                'mysql': default,
-                'oracle':
-                    """TO_TIMESTAMP('{}', 'YYYY-MM-DD"T"HH24:MI:SS.ff6')""".format(
-                        dttm.isoformat()),
-                'presto': default,
-                'sqlite': default,
-            }
-            for k, v in d.items():
-                if self.table.database.sqlalchemy_uri.startswith(k):
-                    return v
-            return default
+            uri = self.table.database.sqlachemy_uri
+            if uri.startswith('oracle'):
+               return "TO_TIMESTAMP('{}', 'YYYY-MM-DD HH24:MI:SS.ff6')"\
+                   .format(dttm.strftime('%Y-%m-%d %H:%M:%S.%f'))
+            elif uri.startswith('mssql'):
+                field_type = field_type.upper()
+                if field_type != 'DATETIME2':
+                    return "CONVERT({}, '{}', 121)".format(field_type, dttm.strftime(tf)[:-3])
+        return "'{}'".format(dttm.strftime(tf))
 
 
 class DruidCluster(Model, AuditMixinNullable):
@@ -1125,7 +1122,7 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
         def int_or_0(v):
             try:
                 v = int(v)
-            except Exception as e:
+            except (TypeError, ValueError):
                 v = 0
             return v
         v1nums = [int_or_0(n) for n in v1.split('.')]
@@ -1282,7 +1279,7 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
         if rejected_metrics:
             raise MetricPermException(
                 "Access to the metrics denied: " + ', '.join(rejected_metrics)
-        )
+            )
 
         granularity = granularity or "all"
         if granularity != "all":
